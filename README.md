@@ -14,7 +14,7 @@ Existing TPC-DS data generators each fail at a different scale (**SF** = TPC-DS 
 
 | tool | small SF (≤50) | mid SF (50–500) | huge SF (≥1000) |
 |---|---|---|---|
-| Official C `dsdgen` | ✓ but CSV-only | ✓ but single-thread | ✓ but no Parquet, no parallelism |
+| Official C `dsdgen` | CSV-only; you orchestrate the parallel children | same | same, plus you orchestrate across machines |
 | DuckDB built-in `dsdgen()` | **✓ very fast** | OOM (holds all 25 tables in RAM) | ✗ |
 | Databricks `spark-sql-perf` | overkill | ✓ | ✓ but heavy Spark/Scala stack |
 
