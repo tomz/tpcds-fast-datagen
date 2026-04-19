@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+*.so
+
+# venvs
+.venv/
+venv/
+env/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# generated data + bench outputs
+tpcds_data/
+benchmark_results.json
+bench_engines_results.json
+bench_engines_dsdgen_results.json
+benchmarks/results.json
+
+# bundled binaries placeholder (kept empty)
+binaries/*
+!binaries/.gitkeep
+
+# OS
+.DS_Store

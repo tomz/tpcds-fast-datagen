@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tpcds-fast-datagen"
+version = "0.1.0"
+description = "The fastest TPC-DS data generator — parallel, streaming, Parquet-native"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Tom Zeng", email = "tom@tomzeng.com" },
+]
+keywords = ["tpcds", "benchmark", "datagen", "parquet", "data-engineering"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Database",
+    "Topic :: System :: Benchmark",
+]
+dependencies = [
+    "pyarrow>=14.0",
+    "click>=8.0",
+    "rich>=13.0",
+    "duckdb>=0.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-timeout"]
+
+[project.scripts]
+tpcds-gen = "tpcds_fast_datagen.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tpcds_fast_datagen"]

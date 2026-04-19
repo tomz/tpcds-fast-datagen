@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TPC-DS Spark Datagen — Cluster Sizing Best Practices</title>
+<meta name="author" content="Tom Zeng">
+<meta name="description" content="Cluster sizing guidance for spark_tpcds_gen.py on Azure HDInsight using E8ads_v5 and E16ads_v5 nodes, calibrated against a proven SF=10000 run.">
+<meta name="keywords" content="TPC-DS, Spark, dsdgen, Parquet, Azure HDInsight, E16ads_v5, E8ads_v5, sizing, benchmark">
+<meta name="date" content="2026-04-18">
+<meta name="generator" content="Hand-authored">
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --muted: #555;
+    --bg: #fafafa;
+    --card: #ffffff;
+    --border: #e1e4e8;
+    --accent: #0366d6;
+    --warn-bg: #fff8c5;
+    --warn-fg: #735c0f;
+    --ok-bg: #dcffe4;
+    --ok-fg: #144620;
+    --code-bg: #f6f8fa;
+    --th-bg: #f1f3f5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.55;
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 2rem 1.25rem 4rem;
+  }
+  header {
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  header h1 {
+    margin: 0 0 0.4rem;
+    font-size: 1.85rem;
+    line-height: 1.2;
+  }
+  header .byline {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  header .byline a { color: var(--accent); text-decoration: none; }
+  header .byline a:hover { text-decoration: underline; }
+  h2 {
+    margin-top: 2.4rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 1.4rem;
+  }
+  h3 { margin-top: 1.6rem; font-size: 1.1rem; }
+  p, li { font-size: 0.96rem; }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.875rem;
+  }
+  code {
+    background: var(--code-bg);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    line-height: 1.45;
+  }
+  pre code { background: transparent; padding: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.4rem;
+    background: var(--card);
+    font-size: 0.88rem;
+    overflow: hidden;
+    border-radius: 6px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  th, td {
+    padding: 0.5rem 0.7rem;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+  }
+  th {
+    background: var(--th-bg);
+    font-weight: 600;
+    color: var(--fg);
+  }
+  td.r, th.r { text-align: right; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #fbfcfd; }
+  .warn {
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+    padding: 0 0.3em;
+    border-radius: 3px;
+    font-size: 0.85em;
+  }
+  .ok {
+    background: var(--ok-bg);
+    color: var(--ok-fg);
+    padding: 0 0.3em;
+    border-radius: 3px;
+    font-size: 0.85em;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: #f1f8ff;
+    padding: 0.7rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.9rem 1.2rem;
+    margin-bottom: 1.5rem;
+  }
+  .toc ol { margin: 0; padding-left: 1.2rem; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-align: center;
+  }
+  ul.checklist { list-style: none; padding-left: 0; }
+  ul.checklist li::before {
+    content: "☐ ";
+    color: var(--accent);
+    font-weight: bold;
+    margin-right: 0.3em;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>TPC-DS Spark Datagen — Cluster Sizing Best Practices</h1>
+  <div class="byline">
+    By <strong>Tom Zeng</strong> (<a href="https://github.com/tomz">@tomz</a>) ·
+    Last updated 2026-04-18 ·
+    Project: <code>tpcds-fast-datagen</code>
+  </div>
+</header>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#quick">Quick recommendation</a></li>
+    <li><a href="#constraints">The three constraints</a></li>
+    <li><a href="#templates">spark-submit templates</a></li>
+    <li><a href="#tables">Full sizing tables</a></li>
+    <li><a href="#smallest">Smallest reliable cluster for SF=10000</a></li>
+    <li><a href="#output">Output sizes (reference)</a></li>
+    <li><a href="#tuning">Tuning rules of thumb</a></li>
+    <li><a href="#model">Wall-clock model</a></li>
+    <li><a href="#checklist">Operational checklist</a></li>
+  </ol>
+</nav>
+
+<p>This document captures sizing guidance for running <code>spark_tpcds_gen.py</code> on Azure HDInsight (or any YARN/Spark cluster) using <code>E8ads_v5</code> and <code>E16ads_v5</code> node SKUs. Numbers are calibrated against a proven SF=10000 run that completed in <strong>3h51m on 10× E16ads_v5 with 80 task slots</strong>.</p>
+
+<h2 id="quick">1. Quick recommendation</h2>
+<table>
+  <thead>
+    <tr><th>SKU</th><th class="r">nodes</th><th class="r">SF=1000 <code>--chunks</code></th><th class="r">SF=10000 <code>--chunks</code></th><th class="r">SF=100000 <code>--chunks</code></th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>E16ads_v5</strong> (16c / 128 GB / 600 GB SSD)</td><td class="r">10</td><td class="r">300</td><td class="r">800</td><td class="r">5,000</td></tr>
+    <tr><td><strong>E8ads_v5</strong> (8c / 64 GB / 300 GB SSD)</td><td class="r">10</td><td class="r">100</td><td class="r">700</td><td class="r">4,000</td></tr>
+  </tbody>
+</table>
+<p>For other cluster sizes see <a href="#tables">§4</a>.</p>
+
+<h2 id="constraints">2. The three constraints</h2>
+<p>Every <code>--chunks</code> choice is bounded by:</p>
+<ol>
+  <li><strong>dsdgen 1M-row floor.</strong> dsdgen's <code>split_work()</code> silently drops any child whose share is below 1M rows. The smallest sharded table is <code>inventory</code>. For SF=10000 (1.31B rows of inventory), max usable chunks is ~870; for SF=100000, ~8,700.</li>
+  <li><strong>Per-node temp disk.</strong> Every concurrent task on a node materialises one <code>.dat</code> file before streaming it to Parquet. Peak per-node usage = <code>cores_per_node × dat_size_per_chunk</code>. Must fit in <code>/mnt/resource</code> (~600 GB on E16ads, ~300 GB on E8ads) with ≥ 30% headroom.</li>
+  <li><strong>Slot saturation.</strong> <code>--chunks</code> should comfortably exceed total task slots so executors stay busy and stragglers don't dominate.</li>
+</ol>
+<div class="callout">The <strong>proven sweet spot</strong> is <code>.dat/chunk ≈ 5–10 GB</code> and <code>chunks ≈ 6–12 × slots</code>.</div>
+
+<h2 id="templates">3. spark-submit templates</h2>
+
+<h3>E16ads_v5 (16-core nodes — recommended)</h3>
+<pre><code>spark-submit \
+  --master yarn --deploy-mode client \
+  --num-executors &lt;N&gt; --executor-cores 16 --executor-memory 96g \
+  --conf spark.network.timeout=1800s \
+  --conf spark.task.maxFailures=8 \
+  --archives /home/sshuser/conda_env.tar.gz#conda_env \
+  --files /home/sshuser/dsdgen,/home/sshuser/tpcds.idx \
+  /home/sshuser/spark_tpcds_gen.py \
+    --scale &lt;SF&gt; \
+    --output abfs:///tpcds/sf&lt;SF&gt; \
+    --chunks &lt;C&gt;</code></pre>
+
+<h3>E8ads_v5 (8-core nodes)</h3>
+<pre><code>spark-submit \
+  --master yarn --deploy-mode client \
+  --num-executors &lt;N&gt; --executor-cores 8 --executor-memory 48g \
+  --conf spark.network.timeout=1800s \
+  --conf spark.task.maxFailures=8 \
+  --archives /home/sshuser/conda_env.tar.gz#conda_env \
+  --files /home/sshuser/dsdgen,/home/sshuser/tpcds.idx \
+  /home/sshuser/spark_tpcds_gen.py \
+    --scale &lt;SF&gt; \
+    --output abfs:///tpcds/sf&lt;SF&gt; \
+    --chunks &lt;C&gt;</code></pre>
+
+<p>Use <strong>1 executor per node</strong> to maximise per-task local disk and memory bandwidth.</p>
+
+<h2 id="tables">4. Full sizing tables</h2>
+
+<h3>E16ads_v5 — 16c / 128 GB / 600 GB local SSD</h3>
+<p><code>--executor-cores 16 --executor-memory 96g</code>, 1 executor per node.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="r">nodes</th><th class="r">SF</th><th class="r"><code>--chunks</code></th>
+      <th class="r">rows/chunk</th><th class="r">.dat/chunk</th>
+      <th class="r">total tasks</th><th class="r">per-node peak</th><th class="r">est. wall-clock</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td class="r">3</td><td class="r">1,000</td><td class="r">200</td><td class="r">14.4M</td><td class="r">3.2 GB</td><td class="r">~1,230</td><td class="r">~51 GB</td><td class="r">~45 min</td></tr>
+    <tr><td class="r">3</td><td class="r">10,000</td><td class="r">600</td><td class="r">47.7M</td><td class="r">10.5 GB</td><td class="r">~3,630</td><td class="r">~168 GB</td><td class="r">~7.5 h</td></tr>
+    <tr><td class="r">3</td><td class="r">100,000</td><td class="r">4,000</td><td class="r">71.5M</td><td class="r">15.7 GB</td><td class="r">~24,030</td><td class="r">~252 GB</td><td class="r">~80 h <span class="warn">⚠️</span></td></tr>
+    <tr><td class="r">5</td><td class="r">1,000</td><td class="r">200</td><td class="r">14.4M</td><td class="r">3.2 GB</td><td class="r">~1,230</td><td class="r">~51 GB</td><td class="r">~27 min</td></tr>
+    <tr><td class="r">5</td><td class="r">10,000</td><td class="r">783</td><td class="r">36.6M</td><td class="r">8.1 GB</td><td class="r">4,728</td><td class="r">~129 GB</td><td class="r">~4.5 h</td></tr>
+    <tr><td class="r">5</td><td class="r">100,000</td><td class="r">4,000</td><td class="r">71.5M</td><td class="r">15.7 GB</td><td class="r">~24,030</td><td class="r">~252 GB</td><td class="r">~45 h <span class="warn">⚠️</span></td></tr>
+    <tr><td class="r">10</td><td class="r">1,000</td><td class="r">300</td><td class="r">9.6M</td><td class="r">2.1 GB</td><td class="r">~1,830</td><td class="r">~34 GB</td><td class="r">~14 min</td></tr>
+    <tr><td class="r">10</td><td class="r">10,000</td><td class="r">800</td><td class="r">35.8M</td><td class="r">7.9 GB</td><td class="r">~4,830</td><td class="r">~126 GB</td><td class="r">~2 h 15 min</td></tr>
+    <tr><td class="r">10</td><td class="r">100,000</td><td class="r">5,000</td><td class="r">57.2M</td><td class="r">12.6 GB</td><td class="r">~30,030</td><td class="r">~202 GB</td><td class="r">~22 h</td></tr>
+    <tr><td class="r">15</td><td class="r">1,000</td><td class="r">400</td><td class="r">7.2M</td><td class="r">1.6 GB</td><td class="r">~2,430</td><td class="r">~26 GB</td><td class="r">~9 min</td></tr>
+    <tr><td class="r">15</td><td class="r">10,000</td><td class="r">1,000</td><td class="r">28.6M</td><td class="r">6.3 GB</td><td class="r">~6,030</td><td class="r">~101 GB</td><td class="r">~1.5 h</td></tr>
+    <tr><td class="r">15</td><td class="r">100,000</td><td class="r">6,000</td><td class="r">47.7M</td><td class="r">10.5 GB</td><td class="r">~36,030</td><td class="r">~168 GB</td><td class="r">~15 h</td></tr>
+    <tr><td class="r">20</td><td class="r">1,000</td><td class="r">400</td><td class="r">7.2M</td><td class="r">1.6 GB</td><td class="r">~2,430</td><td class="r">~26 GB</td><td class="r">~7 min</td></tr>
+    <tr><td class="r">20</td><td class="r">10,000</td><td class="r">1,000</td><td class="r">28.6M</td><td class="r">6.3 GB</td><td class="r">~6,030</td><td class="r">~101 GB</td><td class="r">~70 min</td></tr>
+    <tr><td class="r">20</td><td class="r">100,000</td><td class="r">8,000</td><td class="r">35.8M</td><td class="r">7.9 GB</td><td class="r">~48,030</td><td class="r">~126 GB</td><td class="r">~11 h</td></tr>
+  </tbody>
+</table>
+
+<h3>E8ads_v5 — 8c / 64 GB / 300 GB local SSD</h3>
+<p><code>--executor-cores 8 --executor-memory 48g</code>, 1 executor per node.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="r">nodes</th><th class="r">SF</th><th class="r"><code>--chunks</code></th>
+      <th class="r">rows/chunk</th><th class="r">.dat/chunk</th>
+      <th class="r">total tasks</th><th class="r">per-node peak</th><th class="r">est. wall-clock</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td class="r">3</td><td class="r">1,000</td><td class="r">100</td><td class="r">28.8M</td><td class="r">6.3 GB</td><td class="r">593</td><td class="r">~51 GB</td><td class="r">~90 min</td></tr>
+    <tr><td class="r">3</td><td class="r">10,000</td><td class="r">400</td><td class="r">71.5M</td><td class="r">15.7 GB</td><td class="r">~2,430</td><td class="r">~126 GB</td><td class="r">~16 h <span class="warn">⚠️</span></td></tr>
+    <tr><td class="r">3</td><td class="r">100,000</td><td class="r">3,000</td><td class="r">95.4M</td><td class="r">21.0 GB</td><td class="r">~18,030</td><td class="r">~168 GB</td><td class="r">~159 h <span class="warn">⚠️</span></td></tr>
+    <tr><td class="r">5</td><td class="r">1,000</td><td class="r">100</td><td class="r">28.8M</td><td class="r">6.3 GB</td><td class="r">593</td><td class="r">~51 GB</td><td class="r">~54 min</td></tr>
+    <tr><td class="r">5</td><td class="r">10,000</td><td class="r">500</td><td class="r">57.2M</td><td class="r">12.6 GB</td><td class="r">~3,030</td><td class="r">~101 GB</td><td class="r">~9.5 h</td></tr>
+    <tr><td class="r">5</td><td class="r">100,000</td><td class="r">3,000</td><td class="r">95.4M</td><td class="r">21.0 GB</td><td class="r">~18,030</td><td class="r">~168 GB</td><td class="r">~95 h <span class="warn">⚠️</span></td></tr>
+    <tr><td class="r">10</td><td class="r">1,000</td><td class="r">100</td><td class="r">28.8M</td><td class="r">6.3 GB</td><td class="r">593</td><td class="r">~51 GB</td><td class="r">~27 min <span class="ok">✓ proven</span></td></tr>
+    <tr><td class="r">10</td><td class="r">10,000</td><td class="r">700</td><td class="r">40.9M</td><td class="r">9.0 GB</td><td class="r">~4,230</td><td class="r">~72 GB</td><td class="r">~4.5 h <span class="ok">✓ near proven</span></td></tr>
+    <tr><td class="r">10</td><td class="r">100,000</td><td class="r">4,000</td><td class="r">71.5M</td><td class="r">15.7 GB</td><td class="r">~24,030</td><td class="r">~126 GB</td><td class="r">~45 h <span class="warn">⚠️</span></td></tr>
+    <tr><td class="r">15</td><td class="r">1,000</td><td class="r">200</td><td class="r">14.4M</td><td class="r">3.2 GB</td><td class="r">~1,230</td><td class="r">~26 GB</td><td class="r">~18 min</td></tr>
+    <tr><td class="r">15</td><td class="r">10,000</td><td class="r">800</td><td class="r">35.8M</td><td class="r">7.9 GB</td><td class="r">~4,830</td><td class="r">~63 GB</td><td class="r">~3 h</td></tr>
+    <tr><td class="r">15</td><td class="r">100,000</td><td class="r">5,000</td><td class="r">57.2M</td><td class="r">12.6 GB</td><td class="r">~30,030</td><td class="r">~101 GB</td><td class="r">~30 h</td></tr>
+    <tr><td class="r">20</td><td class="r">1,000</td><td class="r">300</td><td class="r">9.6M</td><td class="r">2.1 GB</td><td class="r">~1,830</td><td class="r">~17 GB</td><td class="r">~14 min</td></tr>
+    <tr><td class="r">20</td><td class="r">10,000</td><td class="r">800</td><td class="r">35.8M</td><td class="r">7.9 GB</td><td class="r">~4,830</td><td class="r">~63 GB</td><td class="r">~2.5 h</td></tr>
+    <tr><td class="r">20</td><td class="r">100,000</td><td class="r">6,000</td><td class="r">47.7M</td><td class="r">10.5 GB</td><td class="r">~36,030</td><td class="r">~84 GB</td><td class="r">~22.5 h</td></tr>
+  </tbody>
+</table>
+
+<h2 id="smallest">5. Smallest reliable cluster for SF=10000</h2>
+<p>Defined as: ≤ 6h wall-clock, fits temp disk with ≥ 30% headroom, survives a single node hiccup.</p>
+<table>
+  <thead>
+    <tr><th>SKU</th><th class="r">min nodes</th><th class="r"><code>--chunks</code></th><th class="r">wall-clock</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>E16ads_v5</td><td class="r"><strong>3</strong></td><td class="r">600</td><td class="r">~7.5 h (borderline)</td></tr>
+    <tr><td>E16ads_v5</td><td class="r"><strong>5</strong></td><td class="r">783</td><td class="r">~4.5 h <span class="ok">✓</span></td></tr>
+    <tr><td>E8ads_v5</td><td class="r"><strong>6</strong></td><td class="r">700</td><td class="r">~5.5 h <span class="ok">✓</span></td></tr>
+  </tbody>
+</table>
+<p>Below 3 nodes, single-node failure costs ≥ 33% of cluster — not recommended for a 4–6h job.</p>
+
+<h2 id="output">6. Output sizes (reference)</h2>
+<table>
+  <thead>
+    <tr><th class="r">SF</th><th class="r">Parquet output</th><th class="r">rows total</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="r">1,000</td><td class="r">~360 GB</td><td class="r">6.35 B</td></tr>
+    <tr><td class="r">10,000</td><td class="r">~3.6 TB</td><td class="r">56.7 B</td></tr>
+    <tr><td class="r">100,000</td><td class="r">~36 TB</td><td class="r">~567 B</td></tr>
+  </tbody>
+</table>
+<p>ABFS Gen2 sustained throughput is not a bottleneck at any of these scales (single account quota is multi-GB/s).</p>
+
+<h2 id="tuning">7. Tuning rules of thumb</h2>
+<ul>
+  <li><strong><code>--chunks ≈ max( total_slots × 8, scale_factor / 12 )</code></strong> is a reasonable starting point.</li>
+  <li><strong>Always pass <code>--chunks</code> explicitly</strong> for SF ≥ 10,000. The auto formula in the script is conservative for big SFs.</li>
+  <li>Set <strong><code>spark.network.timeout=1800s</code></strong> and <strong><code>spark.task.maxFailures=8</code></strong> for any run &gt; 1h to absorb transient ABFS auth refreshes and executor heartbeat blips.</li>
+  <li><strong>Don't co-locate multiple executors per node</strong> — one executor per node maximises per-task local disk and avoids shuffle contention.</li>
+  <li><strong>Cap chunks below the inventory floor</strong>: ≤ 870 for SF=10000, ≤ 8,700 for SF=100000. Above that, dsdgen drops inventory shards silently.</li>
+</ul>
+
+<h2 id="model">8. Wall-clock model</h2>
+<p>Estimates above use:</p>
+<pre><code>wall_clock = total_task_seconds / total_slots / efficiency</code></pre>
+<ul>
+  <li><code>total_task_seconds ≈ 1,100 × SF × 10</code> (calibrated from the proven 3h51m / 80 slots / SF=10000 run)</li>
+  <li><code>efficiency ≈ 0.80–0.85</code> (drops below 0.75 when <code>chunks/slots &lt; 4</code> due to tail latency)</li>
+</ul>
+<p>This means doubling cluster size halves wall-clock until you hit the tail. For SF=10000, 160 slots is the empirical inflection point — beyond that you start chasing 5-minute tail tasks.</p>
+
+<h2 id="checklist">9. Operational checklist</h2>
+<p>Before launching:</p>
+<ul class="checklist">
+  <li><code>dsdgen</code> and <code>tpcds.idx</code> present on the launching node, mentioned in <code>--files</code>.</li>
+  <li><code>conda_env.tar.gz</code> contains <code>pyarrow</code> for the executors, mentioned in <code>--archives ...#conda_env</code>.</li>
+  <li>Output path doesn't already exist (or you've decided to overwrite).</li>
+  <li>ABFS container is in the same region as the cluster (cross-region adds 3–5× latency).</li>
+  <li><code>--chunks</code> respects the inventory floor for your SF.</li>
+  <li>Spark history server is reachable so you can debug stragglers.</li>
+</ul>
+<p>After completion, validate via row counts. Spec totals: SF=1000 → 6,347,386,006 rows; SF=10000 → 56,678,668,681 rows.</p>
+
+<footer>
+  © 2026 Tom Zeng (<a href="https://github.com/tomz">@tomz</a>) · Generated 2026-04-18 · Part of the <code>tpcds-fast-datagen</code> project.
+</footer>
+
+</body>
+</html>
