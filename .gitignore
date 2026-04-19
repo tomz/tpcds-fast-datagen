@@ -33,5 +33,8 @@ benchmarks/results.json
 binaries/*
 !binaries/.gitkeep
 
+# Agent guidance — local working file, points at version-controlled docs
+CLAUDE.md
+
 # OS
 .DS_Store

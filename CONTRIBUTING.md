@@ -17,9 +17,34 @@ pip install -e ".[dev]"
 pytest                       # all
 pytest -v --timeout=60       # verbose with timeout
 pytest --cov=tpcds_fast_datagen --cov-report=term-missing
+pytest tests/test_foo.py::test_bar -v   # single test
 ```
 
 The bundled tests exercise the streaming `.dat` → Parquet pipeline with a synthetic dat file — **no `dsdgen` binary is required to run the suite**. Tests that touch the orchestration layer or the DuckDB engine are gated and skipped if their dependencies are missing.
+
+## Running the CLI
+
+```bash
+# single-node, auto engine
+tpcds-gen --scale 1 --parallel 8 --output /tmp/tpcds_sf1 --overwrite
+
+# distributed via Spark (delegates to spark-submit)
+tpcds-gen --engine spark --scale 1000 --output abfs:///tpcds/sf1000 \
+    -- --master yarn --num-executors 10 --executor-cores 16
+
+# spark-submit-only convenience wrapper
+tpcds-gen-spark-submit --scale 1000 --output abfs:///tpcds/sf1000 \
+    -- --master yarn --num-executors 10
+```
+
+For notebooks, see [`docs/notebooks-and-livy.md`](docs/notebooks-and-livy.md).
+
+## Benchmarks
+
+```bash
+python benchmarks/bench_engines.py --output /var/tmp/bench   # full DuckDB vs dsdgen comparison
+python benchmarks/bench_vs_duckdb.py                          # quick spot-check at SF=1, SF=5
+```
 
 ## Running the dsdgen engine end-to-end (optional)
 
