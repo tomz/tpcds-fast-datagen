@@ -76,7 +76,7 @@ tpcds-gen --engine spark --scale 1000 --output abfs:///tpcds/sf1000 \
   -- --master yarn --num-executors 10
 ```
 
-End-to-end notebook + Livy `POST /batches` examples live in [`docs/notebooks-and-livy.md`](docs/notebooks-and-livy.md). Cluster sizing tables and chunk-tuning guidance live in [`docs/spark-sizing-best-practices.md`](docs/spark-sizing-best-practices.md). Verified-paths matrix and platform-specific workarounds (HDI Livy, Fabric SJD) are in [`docs/live-test-status.md`](docs/live-test-status.md).
+End-to-end notebook + Livy `POST /batches` examples live in [`docs/notebooks-and-livy.md`](docs/notebooks-and-livy.md). Cluster sizing tables and chunk-tuning guidance live in [`docs/spark-sizing-best-practices.md`](docs/spark-sizing-best-practices.md). Verified-paths matrix and platform-specific workarounds (HDI Livy, Fabric SJD) are in [`docs/live-test-status.md`](docs/live-test-status.md). For a fully-worked example of running SF=30,000 on a 5-node HDInsight cluster with HDFS on attached disks (~7 h, ~$104), see [`docs/sf30k-hdi-runbook.md`](docs/sf30k-hdi-runbook.md).
 
 ## How engine selection works
 
