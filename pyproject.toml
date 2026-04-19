@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "tpcds-fast-datagen"
 version = "0.3.0.dev0"
-description = "The fastest TPC-DS data generator — parallel, streaming, Parquet-native, single-node and distributed"
+description = "The fast TPC-DS data generator — parallel, streaming, Parquet-native, single-node and distributed"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.9"
+requires-python = ">=3.8"
 authors = [
     { name = "Tom Zeng", email = "11783+tomz@users.noreply.github.com" },
 ]

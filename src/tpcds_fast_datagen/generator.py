@@ -1,5 +1,7 @@
 """Orchestrator — plans and executes parallel TPC-DS data generation."""
 
+from __future__ import annotations
+
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed

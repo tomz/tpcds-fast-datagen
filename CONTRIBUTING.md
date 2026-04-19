@@ -66,7 +66,7 @@ You only need this if you're touching `worker.py`, `binary.py`, `generator.py`, 
 
 ## Running the Spark variant
 
-`spark_tpcds_gen.py` is **deliberately self-contained** — the driver runs Python 3.6 without `pyarrow`. Do not add imports from `src/tpcds_fast_datagen/`. Edit it as a standalone script. See its module docstring for the `spark-submit` invocation.
+`spark_tpcds_gen.py` at the repo root is now a ~50-line back-compat shim that builds a `SparkSession` and forwards to `tpcds_fast_datagen.spark.generate`. New work goes in `src/tpcds_fast_datagen/spark/`. Both driver and executors must have the wheel installed (via `%pip` in notebooks, `--py-files` for `spark-submit`, or `--archives` for a packed venv). For platform-specific submission paths and known workarounds, see [`docs/notebooks-and-livy.md`](docs/notebooks-and-livy.md) and [`docs/live-test-status.md`](docs/live-test-status.md).
 
 ## Coding conventions
 

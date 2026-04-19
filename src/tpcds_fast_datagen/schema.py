@@ -9,6 +9,8 @@ All 25 TPC-DS tables with:
 Reference: TPC-DS v2.10.0 specification, tpcds.sql from tpcds-kit
 """
 
+from __future__ import annotations
+
 import pyarrow as pa
 from dataclasses import dataclass, field
 from typing import Callable, Optional

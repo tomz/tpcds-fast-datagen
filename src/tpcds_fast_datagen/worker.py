@@ -37,6 +37,10 @@ def _build_csv_options(table_def: TableDef) -> tuple[pcsv.ReadOptions, pcsv.Pars
         column_names=col_names,
         autogenerate_column_names=False,
         block_size=1 << 24,  # 16MB read blocks for good I/O throughput
+        # dsdgen emits some Latin-1 characters in name/address fields; force
+        # the parser to treat input as latin1 (transcoded to utf-8 on read)
+        # so it does not bail with `invalid UTF8 data` mid-stream.
+        encoding="latin1",
     )
     # Try to use invalid_row_handler to skip rows with wrong column count
     # (can happen with companion table dat files at large SF)

@@ -125,3 +125,12 @@ spark-submit --master yarn ... spark_tpcds_gen.py --scale 1000 --output abfs:///
 `tpcds.idx` must sit alongside the binary; the helper auto-copies it from `SparkFiles.get("tpcds.idx")` when needed.
 
 For repeated production use, prefer baking `dsdgen` + `tpcds.idx` into your cluster image at a stable path and pointing `dsdgen_path=` at it — `SparkFiles` distribution adds latency to every job.
+
+## Verified paths and platform-specific workarounds
+
+The matrix of paths verified end-to-end at SF=1 and SF=100 (HDInsight, Fabric, Databricks) is in [`docs/live-test-status.md`](live-test-status.md). Two paths require non-obvious workarounds and are documented there in detail:
+
+- **HDInsight Livy** — every Python on the HDI 5.1 image ships a `pyarrow` linked against an unavailable `GLIBCXX_3.4.26`. Workaround: build a portable venv tarball *on the cluster* with `pyarrow==10.0.1` (last release linking against `3.4.25`) plus the wheel, and ship via `--archives venv.tar.gz#venv` so YARN unpacks it before the Python worker spawns.
+- **Fabric Spark Job Definition (SJD)** — the SJD definition payload rejects a `conf` field, so `spark.archives` cannot be set at submit time. Workaround: extract the (pure-python) package on the driver, broadcast its bytes, and run a high-fanout bootstrap stage (`max(64, defaultParallelism * 8)` partitions) so every potential autoscaled executor stages the package before `generate(...)` runs.
+
+Both workarounds bypass `SparkContext.addPyFile`, which doesn't propagate a wheel to executor Python workers in time for cloudpickle deserialization of the first task.

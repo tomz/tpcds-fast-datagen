@@ -1,5 +1,7 @@
 """CLI entry point for tpcds-gen."""
 
+from __future__ import annotations
+
 import os
 import sys
 
@@ -40,7 +42,7 @@ def main(
     chunks: int | None,
     spark_submit_args: tuple[str, ...],
 ):
-    """TPC-DS Fast Datagen — the fastest TPC-DS data generator.
+    """TPC-DS Fast Datagen — the fast TPC-DS data generator.
 
     Three-tier design:
       * SF <= 50  → DuckDB engine (fast, in-process dsdgen, single COPY per table)

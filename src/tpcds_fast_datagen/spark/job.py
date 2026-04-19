@@ -101,7 +101,22 @@ def _resolve_dsdgen_on_executor(explicit: str | None = None) -> str:
 
 
 def _is_remote(path: str) -> bool:
+    # True for any URI scheme (abfss://, wasbs://, s3a://, hdfs://, ...).
+    # Databricks dbfs:/ is special-cased in normalize_output() to use the
+    # POSIX FUSE mount (/dbfs/...) instead of going through hdfs dfs -put.
     return "://" in path
+
+
+def normalize_output(path: str) -> str:
+    """Translate platform-specific URIs to POSIX paths where a FUSE mount exists.
+
+    Currently:
+        ``dbfs:/foo/bar`` -> ``/dbfs/foo/bar`` on Databricks runtimes.
+    """
+    if path.startswith("dbfs:/") and not path.startswith("dbfs://"):
+        # dbfs:/FileStore/...  ->  /dbfs/FileStore/...
+        return "/dbfs/" + path[len("dbfs:/"):]
+    return path
 
 
 def _hdfs_put(local_path: str, remote_path: str) -> None:
@@ -153,6 +168,7 @@ def run_dsdgen_task(
     parallel = task["parallel"]
 
     binary = _resolve_dsdgen_on_executor(dsdgen_path)
+    output_base = normalize_output(output_base)
     remote = _is_remote(output_base)
 
     if tmp_root is None:
@@ -207,6 +223,7 @@ def run_dsdgen_task(
                     _hdfs_put(local_pq, f"{output_base}/{tname}/{pq_name}")
             else:
                 out_file = f"{output_base}/{tname}/{pq_name}"
+                os.makedirs(os.path.dirname(out_file), exist_ok=True)
                 rows = _streaming_dat_to_parquet(
                     str(dat), table_def, out_file, compression=compression
                 )
