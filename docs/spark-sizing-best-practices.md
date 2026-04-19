@@ -40,9 +40,9 @@ spark-submit \
   --num-executors <N> --executor-cores 16 --executor-memory 96g \
   --conf spark.network.timeout=1800s \
   --conf spark.task.maxFailures=8 \
-  --archives /home/sshuser/conda_env.tar.gz#conda_env \
-  --files /home/sshuser/dsdgen,/home/sshuser/tpcds.idx \
-  /home/sshuser/spark_tpcds_gen.py \
+  --archives /path/to/conda_env.tar.gz#conda_env \
+  --files /path/to/dsdgen,/path/to/tpcds.idx \
+  /path/to/spark_tpcds_gen.py \
     --scale <SF> \
     --output abfs:///tpcds/sf<SF> \
     --chunks <C>
@@ -56,9 +56,9 @@ spark-submit \
   --num-executors <N> --executor-cores 8 --executor-memory 48g \
   --conf spark.network.timeout=1800s \
   --conf spark.task.maxFailures=8 \
-  --archives /home/sshuser/conda_env.tar.gz#conda_env \
-  --files /home/sshuser/dsdgen,/home/sshuser/tpcds.idx \
-  /home/sshuser/spark_tpcds_gen.py \
+  --archives /path/to/conda_env.tar.gz#conda_env \
+  --files /path/to/dsdgen,/path/to/tpcds.idx \
+  /path/to/spark_tpcds_gen.py \
     --scale <SF> \
     --output abfs:///tpcds/sf<SF> \
     --chunks <C>

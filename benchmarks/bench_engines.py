@@ -9,8 +9,8 @@ Designed to demonstrate:
 
 Outputs JSON to benchmark_results.json + a markdown summary table.
 
-Run on wn0 (16c / 125 GB RAM / 305 GB free /mnt):
-    python3 bench_engines.py --output /mnt/resource/sshuser/bench_engines
+Run on a single 16c / 125 GB / NVMe-backed node:
+    python3 bench_engines.py --output /var/tmp/bench_engines
 """
 from __future__ import annotations
 

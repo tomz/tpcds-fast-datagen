@@ -4,35 +4,71 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tpcds-fast-datagen"
-version = "0.1.0"
-description = "The fastest TPC-DS data generator — parallel, streaming, Parquet-native"
+version = "0.3.0.dev0"
+description = "The fastest TPC-DS data generator — parallel, streaming, Parquet-native, single-node and distributed"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [
-    { name = "Tom Zeng", email = "tom@tomzeng.com" },
+    { name = "Tom Zeng", email = "11783+tomz@users.noreply.github.com" },
 ]
-keywords = ["tpcds", "benchmark", "datagen", "parquet", "data-engineering"]
+maintainers = [
+    { name = "Tom Zeng", email = "tom.z.zeng@gmail.com" },
+]
+keywords = ["tpcds", "benchmark", "datagen", "parquet", "data-engineering", "duckdb", "spark"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Database",
     "Topic :: System :: Benchmark",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "pyarrow>=14.0",
+    "pyarrow>=11.0",
     "click>=8.0",
     "rich>=13.0",
     "duckdb>=0.10",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-timeout"]
+dev = ["pytest>=7", "pytest-timeout", "pytest-cov"]
 
 [project.scripts]
 tpcds-gen = "tpcds_fast_datagen.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/tomz/tpcds-fast-datagen"
+Repository = "https://github.com/tomz/tpcds-fast-datagen"
+Issues = "https://github.com/tomz/tpcds-fast-datagen/issues"
+Changelog = "https://github.com/tomz/tpcds-fast-datagen/blob/main/CHANGELOG.md"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/tpcds_fast_datagen"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/",
+    "tests/",
+    "benchmarks/",
+    "docs/",
+    "spark_tpcds_gen.py",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+timeout = 60

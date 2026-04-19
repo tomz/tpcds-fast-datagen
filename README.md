@@ -1,5 +1,9 @@
 # TPC-DS Fast Datagen
 
+[![CI](https://github.com/tomz/tpcds-fast-datagen/actions/workflows/ci.yml/badge.svg)](https://github.com/tomz/tpcds-fast-datagen/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
+
 **Author:** Tom Zeng ([@tomz](https://github.com/tomz))
 
 The fastest TPC-DS data generator — parallel, streaming, Parquet-native, single-node *and* distributed.
@@ -112,7 +116,7 @@ The driver picks `chunks ≈ max(slots, biggest_table_rows / 150M)` by default; 
 
 ## Performance
 
-### Single node (wn0: 16 cores, 125 GB RAM, NVMe-backed `/mnt`)
+### Single node (Standard_E16ads_v5 reference box: 16 cores, 125 GB RAM, NVMe-backed local SSD)
 
 All numbers below are measured by `benchmarks/bench_engines.py` on the same box; raw JSON in `bench_engines_*_results.json`. **Wall** is end-to-end (dsdgen + write Parquet); **peak RSS** is process + children high-water mark via `getrusage`.
 

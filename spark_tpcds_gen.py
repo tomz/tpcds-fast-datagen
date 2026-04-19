@@ -15,7 +15,7 @@ Usage::
     spark-submit --master yarn \\
         --archives /path/to/conda_env.tar.gz#conda_env \\
         --num-executors 10 --executor-cores 8 --executor-memory 16g \\
-        --files /home/sshuser/tpcds-kit/dsdgen,/home/sshuser/tpcds-kit/tpcds.idx \\
+        --files /path/to/tpcds-kit/dsdgen,/path/to/tpcds-kit/tpcds.idx \\
         spark_tpcds_gen.py --scale 1000 --output abfs:///tpcds/sf1000
 
 Self-contained: no tpcds_fast_datagen package required.
