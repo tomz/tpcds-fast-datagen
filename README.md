@@ -10,9 +10,9 @@ The fast TPC-DS data generator — parallel, streaming, Parquet-native, single-n
 
 ## Why
 
-Existing TPC-DS data generators each fail at a different scale:
+Existing TPC-DS data generators each fail at a different scale (**SF** = TPC-DS *scale factor*; SF=1 ≈ 1 GB of raw data, SF=1000 ≈ 1 TB):
 
-| tool | small SF | mid SF | huge SF |
+| tool | small SF (≤50) | mid SF (50–500) | huge SF (≥1000) |
 |---|---|---|---|
 | Official C `dsdgen` | ✓ but CSV-only | ✓ but single-thread | ✓ but no Parquet, no parallelism |
 | DuckDB built-in `dsdgen()` | **✓ very fast** | OOM (holds all 25 tables in RAM) | ✗ |
