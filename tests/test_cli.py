@@ -14,10 +14,10 @@ def test_help_exits_cleanly():
 
 def test_engine_choice_validation_rejects_invalid():
     runner = CliRunner()
-    result = runner.invoke(main, ["--engine", "spark", "--scale", "1"])
+    result = runner.invoke(main, ["--engine", "bogus", "--scale", "1"])
     # click rejects bad choice with exit code 2
     assert result.exit_code != 0
-    assert "spark" in result.output.lower() or "invalid" in result.output.lower()
+    assert "bogus" in result.output.lower() or "invalid" in result.output.lower()
 
 
 def test_engine_auto_is_default_in_help():

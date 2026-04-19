@@ -43,23 +43,37 @@ tpcds-gen --scale 100 --output /mnt/data/tpcds_sf100 --parallel 8
 tpcds-gen --scale 50 --engine dsdgen --output /tmp/tpcds_sf50
 ```
 
-### Distributed (Spark / YARN)
+### Distributed (Spark / YARN / notebooks)
 
-```bash
-spark-submit \
-  --master yarn --deploy-mode client \
-  --num-executors 10 --executor-cores 16 --executor-memory 96g \
-  --conf spark.network.timeout=1800s \
-  --conf spark.task.maxFailures=8 \
-  --archives ./conda_env.tar.gz#conda_env \
-  --files ./dsdgen,./tpcds.idx \
-  spark_tpcds_gen.py \
-    --scale 10000 \
-    --output abfs:///tpcds/sf10000 \
-    --chunks 800
+**From a notebook (Fabric, Databricks, Jupyter) or Livy session:**
+
+```python
+%pip install tpcds-fast-datagen pyarrow
+
+from tpcds_fast_datagen.spark import generate
+result = generate(spark, scale=1000, output="abfs:///tpcds/sf1000")
+print(result.total_rows, result.elapsed_s)
 ```
 
-Cluster sizing tables and chunk-tuning guidance live in [`docs/spark-sizing-best-practices.md`](docs/spark-sizing-best-practices.md).
+**From `spark-submit`:**
+
+```bash
+tpcds-gen-spark-submit --scale 10000 --output abfs:///tpcds/sf10000 \
+  -- \
+  --master yarn --deploy-mode client \
+  --num-executors 10 --executor-cores 16 --executor-memory 96g \
+  --archives ./conda_env.tar.gz#conda_env \
+  --files ./dsdgen,./tpcds.idx
+```
+
+**Or via the unified CLI (just delegates to `spark-submit` under the hood):**
+
+```bash
+tpcds-gen --engine spark --scale 1000 --output abfs:///tpcds/sf1000 \
+  -- --master yarn --num-executors 10
+```
+
+End-to-end notebook + Livy `POST /batches` examples live in [`docs/notebooks-and-livy.md`](docs/notebooks-and-livy.md). Cluster sizing tables and chunk-tuning guidance live in [`docs/spark-sizing-best-practices.md`](docs/spark-sizing-best-practices.md).
 
 ## How engine selection works
 

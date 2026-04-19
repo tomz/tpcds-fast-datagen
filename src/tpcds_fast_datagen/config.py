@@ -15,7 +15,7 @@ class GenConfig:
     dsdgen_path: str | None = None  # None = auto-detect
     overwrite: bool = False
     compression: str = "snappy"  # parquet compression
-    engine: str = "auto"  # "auto", "duckdb", or "dsdgen"
+    engine: str = "auto"  # "auto", "duckdb", "dsdgen", or "spark"
     auto_threshold: int = 50  # SF strictly above this picks dsdgen when engine=='auto'
 
     def __post_init__(self):
@@ -23,9 +23,9 @@ class GenConfig:
             self.parallel = os.cpu_count() or 4
         if self.scale_factor < 1:
             raise ValueError(f"Scale factor must be >= 1, got {self.scale_factor}")
-        if self.engine not in ("auto", "duckdb", "dsdgen"):
+        if self.engine not in ("auto", "duckdb", "dsdgen", "spark"):
             raise ValueError(
-                f"Engine must be 'auto', 'duckdb', or 'dsdgen', got {self.engine!r}"
+                f"Engine must be 'auto', 'duckdb', 'dsdgen', or 'spark', got {self.engine!r}"
             )
         # Resolve 'auto' to a concrete engine based on scale factor.
         # DuckDB is fastest for small SF (matches its native dsdgen speed) but

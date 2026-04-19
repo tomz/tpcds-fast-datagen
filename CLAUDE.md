@@ -23,7 +23,12 @@ pytest --timeout=60                     # uses pytest-timeout
 # Benchmark vs DuckDB baseline
 python benchmarks/bench_vs_duckdb.py
 
-# Distributed/Spark variant (self-contained, see file header for spark-submit invocation)
+# Distributed/Spark — preferred path: notebook / Livy / unified CLI
+tpcds-gen --engine spark --scale 1000 --output abfs:///tpcds/sf1000 \
+    -- --master yarn --num-executors 10 --executor-cores 16
+# OR shell-script style:
+tpcds-gen-spark-submit --scale 1000 --output abfs:///tpcds/sf1000 -- --master yarn --num-executors 10
+# OR legacy script (still works):
 spark-submit ... spark_tpcds_gen.py --scale 1000 --output abfs:///tpcds/sf1000
 ```
 
@@ -53,7 +58,16 @@ Two independent generation **engines**, selected via `--engine` (default `duckdb
 
 ### Spark variant
 
-`spark_tpcds_gen.py` at the repo root is **deliberately self-contained** — driver runs Python 3.6 without `pyarrow`; it must not import from `src/tpcds_fast_datagen/`. Executors get `pyarrow` via `--archives conda_env.tar.gz`. Edit it as a standalone script.
+`spark_tpcds_gen.py` at the repo root is now a **thin compatibility shim** (~50 LOC) that parses the legacy CLI flags, builds a `SparkSession`, and forwards to `tpcds_fast_datagen.spark.generate`. The real implementation lives in the package:
+
+- `src/tpcds_fast_datagen/spark/api.py` — `generate(spark, scale, output, ...)` is the **public entry point** for notebooks (Fabric, Databricks), Livy session statements, and the bootstrap script. Returns `GenerateResult`.
+- `src/tpcds_fast_datagen/spark/job.py` — task planner (`plan_tasks`, `autosize_chunks`) and the executor-side `run_dsdgen_task`. Reuses `schema.py` and `worker.py` from the parent package — there is **one source of truth** for table definitions and the streaming pipeline (no more duplication between single-node and Spark).
+- `src/tpcds_fast_datagen/spark/_bootstrap.py` — the file `spark-submit` ships when the user goes through `tpcds-gen-spark-submit` or `tpcds-gen --engine spark`. It just `import`s `generate` and calls it with JSON-encoded args.
+- `src/tpcds_fast_datagen/spark/submit.py` — builds the `spark-submit` argv and `execvp`s; powers the `tpcds-gen-spark-submit` console script.
+
+Both the driver and executors must have `tpcds_fast_datagen` importable (via `%pip install` in notebooks, `--py-files` for spark-submit, or `--archives conda_env.tar.gz`). The old "driver must run Python 3.6 without pyarrow" constraint has been retired; notebooks and modern Spark all run Python 3.9+.
+
+The `dsdgen` binary is resolved per-executor in this order: `dsdgen_path=` kwarg → `SparkFiles.get("dsdgen")` → `$DSDGEN_PATH` → `binary._SEARCH_PATHS`.
 
 ## Conventions
 

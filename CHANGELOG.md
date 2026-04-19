@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Spark Python API** (`tpcds_fast_datagen.spark.generate(spark, ...)`) — usable from Microsoft Fabric notebooks, Databricks notebooks, Livy session statements, and any other environment where you have a `SparkSession`.
+- **`tpcds-gen-spark-submit`** console script and **`tpcds-gen --engine spark`** dispatch — both build a `spark-submit` invocation around a tiny bundled bootstrap. Pass extra spark-submit options after `--`.
+- `docs/notebooks-and-livy.md` — end-to-end examples for Fabric, Databricks, Livy `POST /sessions` and `POST /batches`, plus the `spark-submit` and legacy paths.
+- 12 new tests for `tpcds_fast_datagen.spark` (planner, autosizing, argv builder, fake-Spark `generate` smoke). Total: 36 passing.
 - Auto engine selection: `--engine auto` (default) picks `duckdb` for SF ≤ 50 and `dsdgen` for SF > 50, with `--auto-threshold N` to override the cutoff.
 - `benchmarks/bench_engines.py` — head-to-head harness measuring wall-clock + peak RSS for both engines, with OOM detection.
 - `docs/spark-sizing-best-practices.md` (and HTML version) — cluster sizing tables for E8ads/E16ads × 3/5/10/15/20 nodes × SF=1000/10000/100000.
@@ -16,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI: pytest + coverage on push and PR.
 
 ### Changed
+- **`spark_tpcds_gen.py` is no longer a 1300-line standalone script.** It is now a ~50-line back-compat shim that builds a `SparkSession` and delegates to `tpcds_fast_datagen.spark.generate`. Existing `spark-submit spark_tpcds_gen.py ...` invocations still work, but both driver and executors now need `tpcds_fast_datagen` importable (via `%pip` / `--py-files` / `--archives`).
+- The Python-3.6-on-driver constraint has been retired. Modern Spark/HDInsight/Fabric/Databricks all run Python 3.9+; the package now imports freely on the driver.
 - `worker.py` now uses a per-column `_cast_to_schema()` helper instead of `RecordBatch.cast()`, restoring compatibility with PyArrow ≥ 11. The previous code required PyArrow ≥ 14 and silently broke on conda/Spark images shipping older versions.
 - README rewritten around the three-tier design (DuckDB / dsdgen-multiprocess / Spark) with measured single-node performance numbers.
 

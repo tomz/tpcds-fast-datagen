@@ -43,7 +43,12 @@ def test_explicit_dsdgen_at_small_sf():
 
 def test_invalid_engine_rejected():
     with pytest.raises(ValueError, match="Engine must be"):
-        GenConfig(scale_factor=1, engine="spark")
+        GenConfig(scale_factor=1, engine="bogus")
+
+
+def test_engine_spark_accepted():
+    cfg = GenConfig(scale_factor=10000, engine="spark")
+    assert cfg.engine == "spark"
 
 
 def test_invalid_scale_factor_rejected():
