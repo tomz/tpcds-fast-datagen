@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-04-19
+
 ### Added
 - **Spark Python API** (`tpcds_fast_datagen.spark.generate(spark, ...)`) — usable from Microsoft Fabric notebooks, Databricks notebooks, Livy session statements, and any other environment where you have a `SparkSession`.
 - **`tpcds-gen-spark-submit`** console script and **`tpcds-gen --engine spark`** dispatch — both build a `spark-submit` invocation around a tiny bundled bootstrap. Pass extra spark-submit options after `--`.

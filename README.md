@@ -31,7 +31,10 @@ Output is always Parquet with calibrated row groups, sane TPC-DS types (decimals
 ### Single node (CLI)
 
 ```bash
-pip install tpcds-fast-datagen
+# Install from a GitHub Release (PyPI not yet — see Releases page for the latest tag)
+pip install https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.0/tpcds_fast_datagen-0.3.0-py3-none-any.whl
+# or install from source:
+#   pip install git+https://github.com/tomz/tpcds-fast-datagen
 
 # SF=1 — auto picks DuckDB engine, ~25s
 tpcds-gen --scale 1 --output /tmp/tpcds_sf1
