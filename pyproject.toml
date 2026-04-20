@@ -11,10 +11,10 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [
-    { name = "Tom Zeng", email = "11783+tomz@users.noreply.github.com" },
+    { name = "Tom Zeng", email = "32094+tomz@users.noreply.github.com" },
 ]
 maintainers = [
-    { name = "Tom Zeng", email = "tom.z.zeng@gmail.com" },
+    { name = "Tom Zeng", email = "32094+tomz@users.noreply.github.com" },
 ]
 keywords = ["tpcds", "benchmark", "datagen", "parquet", "data-engineering", "duckdb", "spark"]
 classifiers = [
