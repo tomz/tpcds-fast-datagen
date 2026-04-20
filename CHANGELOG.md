@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-04-20
+
+### Fixed
+- **Critical: int32 overflow in `*_ticket_number` and `*_order_number` columns** at SF ≥ ~10,000. These columns were declared `int32` in the PyArrow schema, but ticket/order numbers grow monotonically across chunks and exceed `2^31 = 2,147,483,648` mid-run. Observed failure at SF=30K: `ArrowInvalid: In CSV column #9: CSV conversion error to int32: invalid value '2307000001'`. Columns changed from `int32` to `int64`:
+  - `ss_ticket_number`, `sr_ticket_number`
+  - `cs_order_number`, `cr_order_number`
+  - `ws_order_number`, `wr_order_number`
+
+  **Users running v0.3.0 or earlier at SF ≥ 10,000 should upgrade.**
+
+### Verified
+- **SF=10,000 end-to-end on 5× E32ads_v5 (160 slots) on HDInsight:** 1 h 41 min wall-clock, 3.95 TB to ABFS, zero failures, zero storage throttling.
+- **SF=30,000 end-to-end on 5× E32ads_v5 (160 slots) on HDInsight:** 3 h 10 min wall-clock, 11.85 TB to ABFS, zero failures, zero storage throttling. See [`docs/sf30k-hdi-runbook.md`](docs/sf30k-hdi-runbook.md) §13 for the full writeup.
+
+### Docs
+- `docs/spark-sizing-best-practices.{md,html}` — promoted the two 5× E32ads_v5 production runs to the top, with full per-run metrics (cost, throughput, failures, throttling). Demoted the 10× E16ads_v5 / HDFS / v0.2.x run to a historical reference.
+- `docs/sf30k-hdi-runbook.md` — added §13 with actual results, bugs caught, knob analysis, and cost breakdown from the SF=30K production run.
+- HTML sizing doc upgraded to publication quality: serif body, dark-mode palette, responsive tables, Open Graph metadata, production/historical badges, print stylesheet.
+
 ## [0.3.0] — 2026-04-19
 
 ### Added

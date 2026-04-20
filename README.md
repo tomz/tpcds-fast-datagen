@@ -32,7 +32,7 @@ Output is always Parquet with calibrated row groups, sane TPC-DS types (decimals
 
 ```bash
 # Install from a GitHub Release (PyPI not yet — see Releases page for the latest tag)
-pip install https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.0/tpcds_fast_datagen-0.3.0-py3-none-any.whl
+pip install https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.1/tpcds_fast_datagen-0.3.1-py3-none-any.whl
 # or install from source:
 #   pip install git+https://github.com/tomz/tpcds-fast-datagen
 
