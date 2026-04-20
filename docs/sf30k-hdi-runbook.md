@@ -400,7 +400,63 @@ Optional add-ons:
 
 ---
 
-## 13. What to record after the run
+## 13. Actual results (2026-04-19/20 run)
+
+### 13.1 Timing summary
+
+| Run | Output | Wall-clock | TOT written | Throughput | Outcome |
+|---|---|---|---|---|---|
+| **SF=30K v1** (HDFS, chunks=2400, replication=2 attempted) | `hdfs:///tpcds/sf30000` | ~5 h before kill | 1.5 TB | ~0.3 TB/h | ❌ killed — int32 overflow on `ss_ticket_number` (`2307000001 > 2^31`) |
+| **SF=10K validation** (ABFS, chunks=4800, schema fix v0.3.1) | `wasbs://.../tpcds/sf10000` | **~1 h 41 min** | 3.95 TB | ~2.4 TB/h | ✅ SUCCEEDED |
+| **SF=30K v2** (ABFS, chunks=4800, schema fix v0.3.1) | `wasbs://.../tpcds/sf30000` | **~3 h 10 min** | 11.847 TB | ~3.7 TB/h | ✅ SUCCEEDED |
+
+### 13.2 Per-table breakdown (SF=30K v2)
+
+| Table | Chunks | Size | Stage 3 task pace |
+|---|---|---|---|
+| store_sales | 4800 | 4.853 TB | ~125 sec/task |
+| catalog_sales | 4800 | 3.910 TB | ~127 sec/task |
+| web_sales | 4800 | 1.878 TB | ~73 sec/task |
+| dimensions + small fact tables | ~213 | < 50 GB total | ~12 sec/task each |
+| **Total** | 24,613 | **11.847 TB** | — |
+
+### 13.3 Bugs caught and fixed
+
+1. **`ss_ticket_number` / `*_order_number` int32 overflow** at SF ≥ ~10K. Ticket and order numbers monotonically increase across chunks and exceed `2^31 = 2,147,483,648` mid-run. Fixed in `tpcds_fast_datagen.schema` v0.3.1 by changing the following columns from `_int` (int32) to `_bigint` (int64):
+   - `ss_ticket_number`, `sr_ticket_number`
+   - `cs_order_number`, `cr_order_number`
+   - `ws_order_number`, `wr_order_number`
+
+2. **HDFS scratch fills `/tmp` on the OS disk** (124 GB) when `tmp_root` is unset. Workers' `/dev/sda1` filled with `/tmp/tpcds_*` chunks, NodeManagers crashed. Fixed by passing `tmp_root="/mnt/tmp"` to `generate()` (1.2 TB NVMe per worker, must be `chmod 1777`-prepped first).
+
+3. **HDFS only saw `/mnt/resource` after provision** — needed Ambari reconfig of `dfs.datanode.data.dir` to add 16 × `/data_disk_*`. Ambari REST kept returning empty 500s; `configs.py` (Python 2 only — use `/usr/bin/python`) worked. HDFS service restart from Ambari Web UI was required to pick up the new dirs.
+
+### 13.4 Knobs that mattered
+
+Going from the v1 config (HDFS, chunks=2400, replication=2) to v2 (ABFS, chunks=4800, replication=1) gave a **~12× throughput improvement**:
+
+- **HDFS → ABFS:** removed datanode write-amp + sync overhead. ABFS scales to ~60 Gbps egress on a standard storage account; we saw zero `ServerBusy` / `EgressIsOverAccountLimit` / `503` events at peak ~3 TB/h.
+- **chunks=2400 → 4800:** halved per-task runtime (18 min → 60–125 sec depending on table), dramatically improved load balancing and shortened the failure-recovery tail.
+- **`spark.task.maxFailures=8 → 4`:** surfaced the int32 bug in attempt 4 instead of attempt 8. Worth ~1 h of wasted compute on a deterministic-failure run.
+
+### 13.5 Cost (actual)
+
+5 × E32ads_v5 + 2 × E8ads_v5 head ≈ $9.84/h.
+- v1 attempt: ~5 h × $9.84 = **$49** (wasted, killed on int32 bug)
+- SF=10K validation: 1.7 h × $9.84 = **$17**
+- SF=30K v2: 3.2 h × $9.84 = **$31**
+- Plus ~1 h provisioning + ~5 h post-completion idle (scaler bug, see §13.6) = ~$60
+- HDD costs (16×5 = 80 × S30): negligible at hourly proration
+- ABFS storage (11.85 TB Hot, 1 month): ~$245 if held; ~$0 if used and deleted same day
+- **Total cluster compute: ~$160** (would have been ~$100 without the scaler bug + v1 wasted run)
+
+### 13.6 Operational gotcha: auto-scaler bug
+
+The post-run scale-down script (`scale_down_when_done.sh`) polled `yarn application -status` every 2 min and was supposed to break on `Final-State=SUCCEEDED`, then issue `az hdinsight resize --workernode-count 1`. It correctly detected SUCCEEDED but its string comparison failed (awk `-F:` left trailing whitespace in `$STATE`, so `[[ "$STATE" == "SUCCEEDED" ]]` never matched). The cluster sat idle at 5-worker size for ~5 h after job completion before manual intervention — about **$40 wasted**. For next run: use `tr -d ' \r\t'` on the parsed value, or parse via `yarn application -status | awk -F: '/Final-State/ {gsub(/ /,"",$2); print $2}'`.
+
+---
+
+## 14. What to record after the run
 
 For the project's `docs/live-test-status.md` and CHANGELOG:
 
@@ -414,7 +470,7 @@ For the project's `docs/live-test-status.md` and CHANGELOG:
 
 ---
 
-## 14. References
+## 15. References
 
 - [`docs/spark-sizing-best-practices.md`](spark-sizing-best-practices.md) — calibrated wall-clock model
 - [`docs/live-test-status.md`](live-test-status.md) — HDI Livy / Fabric SJD workarounds, dsdgen + venv bootstrap

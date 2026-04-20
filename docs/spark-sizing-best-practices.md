@@ -1,9 +1,15 @@
 # TPC-DS Spark Datagen — Cluster Sizing Best Practices
 
 **Author:** Tom Zeng ([@tomz](https://github.com/tomz))
-**Last updated:** 2026-04-18
+**Last updated:** 2026-04-20
 
-This document captures sizing guidance for running `spark_tpcds_gen.py` on Azure HDInsight (or any YARN/Spark cluster) using `E8ads_v5` and `E16ads_v5` node SKUs. Numbers are calibrated against a proven SF=10000 run that completed in 3h51m on 10× E16ads_v5 with 80 task slots.
+This document captures sizing guidance for running `spark_tpcds_gen.py` on Azure HDInsight (or any YARN/Spark cluster) using `E8ads_v5`, `E16ads_v5`, and `E32ads_v5` node SKUs. Numbers are calibrated against three proven runs:
+
+- **SF=10,000 on 10× E16ads_v5** (80 slots, HDFS output): 3 h 51 min
+- **SF=10,000 on 5× E32ads_v5** (160 slots, ABFS output, v0.3.1, chunks=4800): **1 h 41 min**, 3.95 TB
+- **SF=30,000 on 5× E32ads_v5** (160 slots, ABFS output, v0.3.1, chunks=4800): **3 h 10 min**, 11.85 TB
+
+See §6 for the full calibration table.
 
 ---
 
@@ -130,19 +136,79 @@ Below 3 nodes, single-node failure costs ≥ 33% of cluster — not recommended 
 
 ---
 
-## 6. Output sizes (reference)
+## 6. Output sizes (measured)
 
-| SF | Parquet output | rows total |
-|---:|---:|---:|
-| 1,000   | ~360 GB | 6.35 B |
-| 10,000  | ~3.6 TB | 56.7 B |
-| 100,000 | ~36 TB  | ~567 B |
+| SF | Parquet output | rows total | source |
+|---:|---:|---:|---|
+| 1,000   | ~360 GB  | 6.35 B  | modelled |
+| 10,000  | **3.95 TB** | 56.7 B | **measured** (2026-04-19, v0.3.1, ABFS) |
+| 30,000  | **11.85 TB** | ~170 B | **measured** (2026-04-20, v0.3.1, ABFS) |
+| 100,000 | ~39 TB   | ~567 B | extrapolated from SF=30K |
 
-ABFS Gen2 sustained throughput is not a bottleneck at any of these scales (single account quota is multi-GB/s).
+Per-table breakdown at SF=30,000 (chunks=4800):
+
+| Table | Size | Files |
+|---|---:|---:|
+| store_sales    | 4.853 TB | 4,800 |
+| catalog_sales  | 3.910 TB | 4,800 |
+| web_sales      | 1.878 TB | 4,800 |
+| store_returns  | ~490 GB  | 4,800 |
+| catalog_returns | ~390 GB | 4,800 |
+| web_returns    | ~190 GB  | 4,800 |
+| inventory, customer, customer_address, etc. | < 50 GB total | ~213 |
+
+ABFS Gen2 sustained throughput is not a bottleneck at these scales. The SF=30K run wrote at a peak ~3.7 TB/h on 5 workers (≈ 8.6 Gbps) with **zero** `ServerBusy` / `EgressIsOver*` / `503` events against a standard storage account.
 
 ---
 
-## 7. Tuning rules of thumb
+## 7. Calibration runs
+
+Real end-to-end measurements. Use these for interpolation when your cluster shape matches.
+
+### SF=10,000 on 10× E16ads_v5 (80 slots, HDFS, v0.2.x)
+
+| metric | value |
+|---|---|
+| Wall-clock | 3 h 51 min |
+| Output | HDFS local on cluster (replication=2) |
+| chunks | 783 |
+| Per-task wall-clock | ~17 min avg |
+| Throughput | ~0.9 TB/h |
+
+### SF=10,000 on 5× E32ads_v5 (160 slots, ABFS, v0.3.1)
+
+| metric | value |
+|---|---|
+| Wall-clock | **1 h 41 min** |
+| Output | ABFS (wasbs) |
+| chunks | 4,800 |
+| Per-task wall-clock | ~60 sec avg (store_sales) |
+| Throughput | ~2.4 TB/h |
+| Total | 3.95 TB / 21,013 tasks |
+
+### SF=30,000 on 5× E32ads_v5 (160 slots, ABFS, v0.3.1)
+
+| metric | value |
+|---|---|
+| Wall-clock | **3 h 10 min** |
+| Output | ABFS (wasbs) |
+| chunks | 4,800 |
+| Per-task wall-clock | ~125 sec avg (store_sales), ~73 sec (web_sales) |
+| Throughput | ~3.7 TB/h (peak) |
+| Total | 11.85 TB / 24,613 tasks |
+| Speculation relaunches | 0 |
+| Storage throttling | 0 |
+
+### Observations
+
+- **ABFS ≫ HDFS for large SF.** The v0.2.x HDFS run took 2.3× longer than v0.3.1 ABFS at the same SF, despite having half the slots. HDFS replication + local-disk write amplification dominated.
+- **chunks=4800 is the sweet spot** for ~5 GB `.dat`/chunk at SF=30K. Went from 18-min tasks (chunks=2400) to 2-min tasks (chunks=4800) with the same cluster.
+- **Doubling SF scales sub-linearly in wall-clock**: SF=10K→SF=30K is 3× data but only 1.9× wall-clock. The startup/dimension tables are constant overhead; once fact-table throughput saturates, it's flat at ~3.7 TB/h on this shape.
+- **int64 is required for `*_ticket_number` and `*_order_number` at SF ≥ ~10K** — fixed in v0.3.1 (see CHANGELOG). Running older versions at SF=30K will fail with `CSV conversion error to int32`.
+
+---
+
+## 8. Tuning rules of thumb
 
 - **`--chunks ≈ max( total_slots × 8, scale_factor / 12 )`** is a reasonable starting point.
 - **Always pass `--chunks` explicitly** for SF ≥ 10,000. The auto formula in the script is conservative for big SFs.
@@ -152,7 +218,7 @@ ABFS Gen2 sustained throughput is not a bottleneck at any of these scales (singl
 
 ---
 
-## 8. Wall-clock model
+## 9. Wall-clock model
 
 Estimates above use:
 
@@ -167,7 +233,7 @@ This means doubling cluster size halves wall-clock until you hit the tail. For S
 
 ---
 
-## 9. Operational checklist
+## 10. Operational checklist
 
 Before launching:
 
