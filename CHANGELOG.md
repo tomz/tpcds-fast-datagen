@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-04-20
+
 ### Added
 - **`tpcds-gen doctor`** — environment diagnostic subcommand. Reports Python
   version, pyarrow, duckdb (+ tpcds extension), dsdgen/tpcds.idx location, and

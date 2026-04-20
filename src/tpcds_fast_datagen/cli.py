@@ -282,7 +282,7 @@ def doctor_cmd():
 
 # Base URL for prebuilt binaries. Individual release tags live under this.
 _PREBUILT_BASE = "https://github.com/tomz/tpcds-fast-datagen/releases/download"
-_PREBUILT_DEFAULT_TAG = "v0.3.1"
+_PREBUILT_DEFAULT_TAG = "v0.3.2"
 
 
 @main.command("install-dsdgen")

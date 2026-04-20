@@ -32,7 +32,7 @@ Output is always Parquet with calibrated row groups, sane TPC-DS types (decimals
 
 ```bash
 # Install from a GitHub Release (PyPI not yet — see Releases page for the latest tag)
-pip install https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.1/tpcds_fast_datagen-0.3.1-py3-none-any.whl
+pip install https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.2/tpcds_fast_datagen-0.3.2-py3-none-any.whl
 # or install from source:
 #   pip install git+https://github.com/tomz/tpcds-fast-datagen
 
@@ -52,7 +52,7 @@ tpcds-gen --scale 50 --engine dsdgen --output /tmp/tpcds_sf50
 
 ```python
 # On Fabric / Databricks / Jupyter, install from the GitHub Release (not yet on PyPI)
-%pip install https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.1/tpcds_fast_datagen-0.3.1-py3-none-any.whl pyarrow
+%pip install https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.2/tpcds_fast_datagen-0.3.2-py3-none-any.whl pyarrow
 
 from tpcds_fast_datagen.spark import generate
 result = generate(spark, scale=1000, output="abfs:///tpcds/sf1000")
@@ -101,9 +101,19 @@ Override the SF=50 cutoff with `--auto-threshold N`. On a memory-poor box, drop 
 
 - **Python ≥ 3.9**
 - **DuckDB engine** uses the bundled `tpcds` extension — installed automatically the first time the engine runs.
-- **dsdgen engine** needs the official `dsdgen` binary from [tpcds-kit](https://github.com/databricks/tpcds-kit). Either:
-  1. Set `DSDGEN_PATH` env var to the binary location, or
-  2. Place `dsdgen` + `tpcds.idx` on your `PATH`.
+- **dsdgen engine** needs the official `dsdgen` binary from [tpcds-kit](https://github.com/databricks/tpcds-kit). Easiest:
+
+    ```bash
+    tpcds-gen install-dsdgen              # prebuilt from GH Releases (linux-x86_64, linux-arm64, macos-x86_64, macos-arm64)
+    tpcds-gen install-dsdgen --from-source # clones tpcds-kit and builds (use on old glibc, e.g. HDInsight)
+    ```
+
+    Or point at an existing binary via any of:
+    1. `DSDGEN_PATH=/path/to/dsdgen`
+    2. `DSDGEN_URL=https://.../dsdgen` (+ optional `DSDGEN_IDX_URL`; supports `http(s)://`, `file://`, `abfs://`, `wasbs://`, `s3://`, `gs://`) — handy for notebooks
+    3. `dsdgen` + `tpcds.idx` on your `PATH`
+
+    Run `tpcds-gen doctor` to verify your environment.
 
 ## Architecture
 
