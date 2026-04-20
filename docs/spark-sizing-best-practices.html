@@ -166,20 +166,20 @@
     <li><a href="#tables">Full sizing tables</a></li>
     <li><a href="#smallest">Smallest reliable cluster for SF=10000</a></li>
     <li><a href="#output">Output sizes (measured)</a></li>
-    <li><a href="#calibration">Calibration runs</a></li>
+    <li><a href="#calibration">Production runs</a></li>
     <li><a href="#tuning">Tuning rules of thumb</a></li>
     <li><a href="#model">Wall-clock model</a></li>
     <li><a href="#checklist">Operational checklist</a></li>
   </ol>
 </nav>
 
-<p>This document captures sizing guidance for running <code>spark_tpcds_gen.py</code> on Azure HDInsight (or any YARN/Spark cluster) using <code>E8ads_v5</code>, <code>E16ads_v5</code>, and <code>E32ads_v5</code> node SKUs. Numbers are calibrated against three proven runs:</p>
+<p>This document captures sizing guidance for running <code>spark_tpcds_gen.py</code> on Azure HDInsight (or any YARN/Spark cluster) using <code>E8ads_v5</code>, <code>E16ads_v5</code>, and <code>E32ads_v5</code> node SKUs. Numbers are calibrated against production runs:</p>
 <ul>
-  <li><strong>SF=10,000 on 10× E16ads_v5</strong> (80 slots, HDFS output): 3 h 51 min</li>
-  <li><strong>SF=10,000 on 5× E32ads_v5</strong> (160 slots, ABFS output, v0.3.1, <code>chunks=4800</code>): <strong>1 h 41 min</strong>, 3.95 TB</li>
-  <li><strong>SF=30,000 on 5× E32ads_v5</strong> (160 slots, ABFS output, v0.3.1, <code>chunks=4800</code>): <strong>3 h 10 min</strong>, 11.85 TB</li>
+  <li>⭐ <strong>SF=10,000 on 5× E32ads_v5</strong> (160 slots, ABFS, v0.3.1, <code>chunks=4800</code>): <strong>1 h 41 min</strong>, 3.95 TB (2026-04-19)</li>
+  <li>⭐ <strong>SF=30,000 on 5× E32ads_v5</strong> (160 slots, ABFS, v0.3.1, <code>chunks=4800</code>): <strong>3 h 10 min</strong>, 11.85 TB (2026-04-20)</li>
+  <li>Historical: <strong>SF=10,000 on 10× E16ads_v5</strong> (80 slots, HDFS, v0.2.x): 3 h 51 min</li>
 </ul>
-<p>See <a href="#calibration">§7</a> for the full calibration tables.</p>
+<p>See <a href="#calibration">§7</a> for the full production-run measurements.</p>
 
 <h2 id="quick">1. Quick recommendation</h2>
 <table>
@@ -337,10 +337,47 @@
 
 <p>ABFS Gen2 sustained throughput is not a bottleneck at these scales. The SF=30K run wrote at a peak ~3.7 TB/h on 5 workers (≈ 8.6 Gbps) with <strong>zero</strong> <code>ServerBusy</code> / <code>EgressIsOver*</code> / <code>503</code> events against a standard storage account.</p>
 
-<h2 id="calibration">7. Calibration runs</h2>
-<p>Real end-to-end measurements. Use these for interpolation when your cluster shape matches.</p>
+<h2 id="calibration">7. Production runs (measured)</h2>
+<p>Actual end-to-end production runs on HDInsight. The <strong>5× E32ads_v5</strong> shape below is the recommended starting point for SF ≥ 10K — two successful runs, zero task failures, zero storage throttling.</p>
 
-<h3>SF=10,000 on 10× E16ads_v5 (80 slots, HDFS, v0.2.x)</h3>
+<h3>⭐ SF=10,000 on 5× E32ads_v5 (160 slots, ABFS, v0.3.1) — production</h3>
+<table>
+  <tbody>
+    <tr><td>Date</td><td>2026-04-19</td></tr>
+    <tr><td>Wall-clock</td><td><strong>1 h 41 min</strong></td></tr>
+    <tr><td>Output</td><td>ABFS (wasbs, hot tier)</td></tr>
+    <tr><td><code>chunks</code></td><td>4,800</td></tr>
+    <tr><td>Cluster cost</td><td>~$17</td></tr>
+    <tr><td>Per-task wall-clock</td><td>~60 sec avg (store_sales)</td></tr>
+    <tr><td>Throughput</td><td>~2.4 TB/h</td></tr>
+    <tr><td>Total</td><td>3.95 TB / 21,013 tasks</td></tr>
+    <tr><td>Task failures</td><td>0</td></tr>
+    <tr><td>Speculation relaunches</td><td>0</td></tr>
+    <tr><td>Storage throttling</td><td>0</td></tr>
+  </tbody>
+</table>
+
+<h3>⭐ SF=30,000 on 5× E32ads_v5 (160 slots, ABFS, v0.3.1) — production</h3>
+<table>
+  <tbody>
+    <tr><td>Date</td><td>2026-04-20</td></tr>
+    <tr><td>Wall-clock</td><td><strong>3 h 10 min</strong></td></tr>
+    <tr><td>Output</td><td>ABFS (wasbs, hot tier)</td></tr>
+    <tr><td><code>chunks</code></td><td>4,800</td></tr>
+    <tr><td>Cluster cost</td><td>~$31</td></tr>
+    <tr><td>Per-task wall-clock</td><td>~125 sec avg (store_sales), ~73 sec (web_sales)</td></tr>
+    <tr><td>Throughput</td><td>~3.7 TB/h (peak)</td></tr>
+    <tr><td>Total</td><td>11.85 TB / 24,613 tasks</td></tr>
+    <tr><td>Task failures</td><td>0</td></tr>
+    <tr><td>Speculation relaunches</td><td>0</td></tr>
+    <tr><td>Storage throttling</td><td>0</td></tr>
+  </tbody>
+</table>
+
+<p>See <a href="sf30k-hdi-runbook.md"><code>docs/sf30k-hdi-runbook.md</code></a> §13 for the full SF=30K writeup (runbook, bugs caught, knob analysis, cost breakdown).</p>
+
+<h3>Historical reference: SF=10,000 on 10× E16ads_v5 (80 slots, HDFS, v0.2.x)</h3>
+<p>Earlier calibration point, pre-dating v0.3.1 and the ABFS migration. Included for comparison:</p>
 <table>
   <tbody>
     <tr><td>Wall-clock</td><td>3 h 51 min</td></tr>
@@ -351,38 +388,13 @@
   </tbody>
 </table>
 
-<h3>SF=10,000 on 5× E32ads_v5 (160 slots, ABFS, v0.3.1)</h3>
-<table>
-  <tbody>
-    <tr><td>Wall-clock</td><td><strong>1 h 41 min</strong></td></tr>
-    <tr><td>Output</td><td>ABFS (wasbs)</td></tr>
-    <tr><td><code>chunks</code></td><td>4,800</td></tr>
-    <tr><td>Per-task wall-clock</td><td>~60 sec avg (store_sales)</td></tr>
-    <tr><td>Throughput</td><td>~2.4 TB/h</td></tr>
-    <tr><td>Total</td><td>3.95 TB / 21,013 tasks</td></tr>
-  </tbody>
-</table>
-
-<h3>SF=30,000 on 5× E32ads_v5 (160 slots, ABFS, v0.3.1)</h3>
-<table>
-  <tbody>
-    <tr><td>Wall-clock</td><td><strong>3 h 10 min</strong></td></tr>
-    <tr><td>Output</td><td>ABFS (wasbs)</td></tr>
-    <tr><td><code>chunks</code></td><td>4,800</td></tr>
-    <tr><td>Per-task wall-clock</td><td>~125 sec avg (store_sales), ~73 sec (web_sales)</td></tr>
-    <tr><td>Throughput</td><td>~3.7 TB/h (peak)</td></tr>
-    <tr><td>Total</td><td>11.85 TB / 24,613 tasks</td></tr>
-    <tr><td>Speculation relaunches</td><td>0</td></tr>
-    <tr><td>Storage throttling</td><td>0</td></tr>
-  </tbody>
-</table>
-
 <h3>Observations</h3>
 <ul>
-  <li><strong>ABFS ≫ HDFS for large SF.</strong> The v0.2.x HDFS run took 2.3× longer than v0.3.1 ABFS at the same SF, despite having half the slots. HDFS replication + local-disk write amplification dominated.</li>
-  <li><strong><code>chunks=4800</code> is the sweet spot</strong> for ~5 GB <code>.dat</code>/chunk at SF=30K. Went from 18-min tasks (<code>chunks=2400</code>) to 2-min tasks (<code>chunks=4800</code>) with the same cluster.</li>
+  <li><strong>5× E32ads_v5 beats 10× E16ads_v5 by 2.3×</strong> at the same SF. Same number of total cores (160), but fewer-bigger nodes eliminated per-node shuffle contention and halved replication overhead (HDFS → ABFS).</li>
+  <li><strong>ABFS ≫ HDFS for large SF.</strong> The HDFS run took 2.3× longer than ABFS at the same SF despite similar core count. HDFS replication + local-disk write amplification dominated.</li>
+  <li><strong><code>chunks=4800</code> is the sweet spot</strong> for ~5 GB <code>.dat</code>/chunk at SF=30K. Going from <code>chunks=2400</code> (v1 failed attempt) to <code>chunks=4800</code> dropped per-task wall-clock from 18 min to 2 min on the same cluster.</li>
   <li><strong>Doubling SF scales sub-linearly in wall-clock</strong>: SF=10K→SF=30K is 3× data but only 1.9× wall-clock. The startup/dimension tables are constant overhead; once fact-table throughput saturates, it's flat at ~3.7 TB/h on this shape.</li>
-  <li><strong>int64 is required for <code>*_ticket_number</code> and <code>*_order_number</code> at SF ≥ ~10K</strong> — fixed in v0.3.1 (see CHANGELOG). Running older versions at SF=30K will fail with <code>CSV conversion error to int32</code>.</li>
+  <li><strong>int64 is required for <code>*_ticket_number</code> and <code>*_order_number</code> at SF ≥ ~10K</strong> — fixed in v0.3.1 (see CHANGELOG). Running older versions at SF ≥ ~10K will fail with <code>CSV conversion error to int32</code>.</li>
 </ul>
 
 <h2 id="tuning">8. Tuning rules of thumb</h2>
