@@ -1,14 +1,15 @@
 # SF=30K on HDInsight: end-to-end runbook
 
 **Author:** Tom Zeng ([@tomz](https://github.com/tomz))
-**Last updated:** 2026-04-19
-**Status:** planned (not yet executed)
+**Last updated:** 2026-04-20
+**Status:** ✓ executed — SF=10,000 (1 h 41 m) and SF=30,000 (3 h 10 m) on 5× E32ads_v5 against ABFS. See §13 for the full writeup.
 
 End-to-end procedure for generating TPC-DS at scale factor 30,000
-(~10.8 TB Parquet, ~3.4 B rows of `store_sales` alone) on a 5-node
-HDInsight Spark cluster, writing to HDFS on attached Standard HDDs.
-
-Sized to finish in **~6–7 h with comfortable margin in a 12 h budget**.
+(~10.8 TB Parquet in the plan; **11.85 TB measured**) on a 5-node
+HDInsight Spark cluster. The original plan targeted HDFS on attached
+Standard HDDs; the actual runs wrote to ABFS hot-tier storage, which
+turned out to be **2.3× faster** than HDFS at the same node count
+(see §13.6).
 
 ---
 
