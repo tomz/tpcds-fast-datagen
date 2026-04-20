@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <title>TPC-DS Spark Datagen — Cluster Sizing Best Practices</title>
 <meta name="author" content="Tom Zeng">
-<meta name="description" content="Cluster sizing guidance for spark_tpcds_gen.py on Azure HDInsight using E8ads_v5 and E16ads_v5 nodes, calibrated against a proven SF=10000 run.">
-<meta name="keywords" content="TPC-DS, Spark, dsdgen, Parquet, Azure HDInsight, E16ads_v5, E8ads_v5, sizing, benchmark">
-<meta name="date" content="2026-04-18">
+<meta name="description" content="Cluster sizing guidance for spark_tpcds_gen.py on Azure HDInsight using E8ads_v5, E16ads_v5, and E32ads_v5 nodes, calibrated against measured SF=10K and SF=30K production runs.">
+<meta name="keywords" content="TPC-DS, Spark, dsdgen, Parquet, Azure HDInsight, E16ads_v5, E8ads_v5, E32ads_v5, sizing, benchmark">
+<meta name="date" content="2026-04-20">
 <meta name="generator" content="Hand-authored">
 <style>
   :root {
@@ -152,7 +152,7 @@
   <h1>TPC-DS Spark Datagen — Cluster Sizing Best Practices</h1>
   <div class="byline">
     By <strong>Tom Zeng</strong> (<a href="https://github.com/tomz">@tomz</a>) ·
-    Last updated 2026-04-18 ·
+    Last updated 2026-04-20 ·
     Project: <code>tpcds-fast-datagen</code>
   </div>
 </header>
@@ -165,14 +165,21 @@
     <li><a href="#templates">spark-submit templates</a></li>
     <li><a href="#tables">Full sizing tables</a></li>
     <li><a href="#smallest">Smallest reliable cluster for SF=10000</a></li>
-    <li><a href="#output">Output sizes (reference)</a></li>
+    <li><a href="#output">Output sizes (measured)</a></li>
+    <li><a href="#calibration">Calibration runs</a></li>
     <li><a href="#tuning">Tuning rules of thumb</a></li>
     <li><a href="#model">Wall-clock model</a></li>
     <li><a href="#checklist">Operational checklist</a></li>
   </ol>
 </nav>
 
-<p>This document captures sizing guidance for running <code>spark_tpcds_gen.py</code> on Azure HDInsight (or any YARN/Spark cluster) using <code>E8ads_v5</code> and <code>E16ads_v5</code> node SKUs. Numbers are calibrated against a proven SF=10000 run that completed in <strong>3h51m on 10× E16ads_v5 with 80 task slots</strong>.</p>
+<p>This document captures sizing guidance for running <code>spark_tpcds_gen.py</code> on Azure HDInsight (or any YARN/Spark cluster) using <code>E8ads_v5</code>, <code>E16ads_v5</code>, and <code>E32ads_v5</code> node SKUs. Numbers are calibrated against three proven runs:</p>
+<ul>
+  <li><strong>SF=10,000 on 10× E16ads_v5</strong> (80 slots, HDFS output): 3 h 51 min</li>
+  <li><strong>SF=10,000 on 5× E32ads_v5</strong> (160 slots, ABFS output, v0.3.1, <code>chunks=4800</code>): <strong>1 h 41 min</strong>, 3.95 TB</li>
+  <li><strong>SF=30,000 on 5× E32ads_v5</strong> (160 slots, ABFS output, v0.3.1, <code>chunks=4800</code>): <strong>3 h 10 min</strong>, 11.85 TB</li>
+</ul>
+<p>See <a href="#calibration">§7</a> for the full calibration tables.</p>
 
 <h2 id="quick">1. Quick recommendation</h2>
 <table>
@@ -299,20 +306,86 @@
 </table>
 <p>Below 3 nodes, single-node failure costs ≥ 33% of cluster — not recommended for a 4–6h job.</p>
 
-<h2 id="output">6. Output sizes (reference)</h2>
+<h2 id="output">6. Output sizes (measured)</h2>
 <table>
   <thead>
-    <tr><th class="r">SF</th><th class="r">Parquet output</th><th class="r">rows total</th></tr>
+    <tr><th class="r">SF</th><th class="r">Parquet output</th><th class="r">rows total</th><th>source</th></tr>
   </thead>
   <tbody>
-    <tr><td class="r">1,000</td><td class="r">~360 GB</td><td class="r">6.35 B</td></tr>
-    <tr><td class="r">10,000</td><td class="r">~3.6 TB</td><td class="r">56.7 B</td></tr>
-    <tr><td class="r">100,000</td><td class="r">~36 TB</td><td class="r">~567 B</td></tr>
+    <tr><td class="r">1,000</td><td class="r">~360 GB</td><td class="r">6.35 B</td><td>modelled</td></tr>
+    <tr><td class="r">10,000</td><td class="r"><strong>3.95 TB</strong></td><td class="r">56.7 B</td><td><strong>measured</strong> (2026-04-19, v0.3.1, ABFS)</td></tr>
+    <tr><td class="r">30,000</td><td class="r"><strong>11.85 TB</strong></td><td class="r">~170 B</td><td><strong>measured</strong> (2026-04-20, v0.3.1, ABFS)</td></tr>
+    <tr><td class="r">100,000</td><td class="r">~39 TB</td><td class="r">~567 B</td><td>extrapolated from SF=30K</td></tr>
   </tbody>
 </table>
-<p>ABFS Gen2 sustained throughput is not a bottleneck at any of these scales (single account quota is multi-GB/s).</p>
 
-<h2 id="tuning">7. Tuning rules of thumb</h2>
+<p>Per-table breakdown at SF=30,000 (<code>chunks=4800</code>):</p>
+<table>
+  <thead>
+    <tr><th>Table</th><th class="r">Size</th><th class="r">Files</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>store_sales</td><td class="r">4.853 TB</td><td class="r">4,800</td></tr>
+    <tr><td>catalog_sales</td><td class="r">3.910 TB</td><td class="r">4,800</td></tr>
+    <tr><td>web_sales</td><td class="r">1.878 TB</td><td class="r">4,800</td></tr>
+    <tr><td>store_returns</td><td class="r">~490 GB</td><td class="r">4,800</td></tr>
+    <tr><td>catalog_returns</td><td class="r">~390 GB</td><td class="r">4,800</td></tr>
+    <tr><td>web_returns</td><td class="r">~190 GB</td><td class="r">4,800</td></tr>
+    <tr><td>inventory, customer, customer_address, etc.</td><td class="r">&lt; 50 GB total</td><td class="r">~213</td></tr>
+  </tbody>
+</table>
+
+<p>ABFS Gen2 sustained throughput is not a bottleneck at these scales. The SF=30K run wrote at a peak ~3.7 TB/h on 5 workers (≈ 8.6 Gbps) with <strong>zero</strong> <code>ServerBusy</code> / <code>EgressIsOver*</code> / <code>503</code> events against a standard storage account.</p>
+
+<h2 id="calibration">7. Calibration runs</h2>
+<p>Real end-to-end measurements. Use these for interpolation when your cluster shape matches.</p>
+
+<h3>SF=10,000 on 10× E16ads_v5 (80 slots, HDFS, v0.2.x)</h3>
+<table>
+  <tbody>
+    <tr><td>Wall-clock</td><td>3 h 51 min</td></tr>
+    <tr><td>Output</td><td>HDFS local on cluster (replication=2)</td></tr>
+    <tr><td><code>chunks</code></td><td>783</td></tr>
+    <tr><td>Per-task wall-clock</td><td>~17 min avg</td></tr>
+    <tr><td>Throughput</td><td>~0.9 TB/h</td></tr>
+  </tbody>
+</table>
+
+<h3>SF=10,000 on 5× E32ads_v5 (160 slots, ABFS, v0.3.1)</h3>
+<table>
+  <tbody>
+    <tr><td>Wall-clock</td><td><strong>1 h 41 min</strong></td></tr>
+    <tr><td>Output</td><td>ABFS (wasbs)</td></tr>
+    <tr><td><code>chunks</code></td><td>4,800</td></tr>
+    <tr><td>Per-task wall-clock</td><td>~60 sec avg (store_sales)</td></tr>
+    <tr><td>Throughput</td><td>~2.4 TB/h</td></tr>
+    <tr><td>Total</td><td>3.95 TB / 21,013 tasks</td></tr>
+  </tbody>
+</table>
+
+<h3>SF=30,000 on 5× E32ads_v5 (160 slots, ABFS, v0.3.1)</h3>
+<table>
+  <tbody>
+    <tr><td>Wall-clock</td><td><strong>3 h 10 min</strong></td></tr>
+    <tr><td>Output</td><td>ABFS (wasbs)</td></tr>
+    <tr><td><code>chunks</code></td><td>4,800</td></tr>
+    <tr><td>Per-task wall-clock</td><td>~125 sec avg (store_sales), ~73 sec (web_sales)</td></tr>
+    <tr><td>Throughput</td><td>~3.7 TB/h (peak)</td></tr>
+    <tr><td>Total</td><td>11.85 TB / 24,613 tasks</td></tr>
+    <tr><td>Speculation relaunches</td><td>0</td></tr>
+    <tr><td>Storage throttling</td><td>0</td></tr>
+  </tbody>
+</table>
+
+<h3>Observations</h3>
+<ul>
+  <li><strong>ABFS ≫ HDFS for large SF.</strong> The v0.2.x HDFS run took 2.3× longer than v0.3.1 ABFS at the same SF, despite having half the slots. HDFS replication + local-disk write amplification dominated.</li>
+  <li><strong><code>chunks=4800</code> is the sweet spot</strong> for ~5 GB <code>.dat</code>/chunk at SF=30K. Went from 18-min tasks (<code>chunks=2400</code>) to 2-min tasks (<code>chunks=4800</code>) with the same cluster.</li>
+  <li><strong>Doubling SF scales sub-linearly in wall-clock</strong>: SF=10K→SF=30K is 3× data but only 1.9× wall-clock. The startup/dimension tables are constant overhead; once fact-table throughput saturates, it's flat at ~3.7 TB/h on this shape.</li>
+  <li><strong>int64 is required for <code>*_ticket_number</code> and <code>*_order_number</code> at SF ≥ ~10K</strong> — fixed in v0.3.1 (see CHANGELOG). Running older versions at SF=30K will fail with <code>CSV conversion error to int32</code>.</li>
+</ul>
+
+<h2 id="tuning">8. Tuning rules of thumb</h2>
 <ul>
   <li><strong><code>--chunks ≈ max( total_slots × 8, scale_factor / 12 )</code></strong> is a reasonable starting point.</li>
   <li><strong>Always pass <code>--chunks</code> explicitly</strong> for SF ≥ 10,000. The auto formula in the script is conservative for big SFs.</li>
@@ -321,7 +394,7 @@
   <li><strong>Cap chunks below the inventory floor</strong>: ≤ 870 for SF=10000, ≤ 8,700 for SF=100000. Above that, dsdgen drops inventory shards silently.</li>
 </ul>
 
-<h2 id="model">8. Wall-clock model</h2>
+<h2 id="model">9. Wall-clock model</h2>
 <p>Estimates above use:</p>
 <pre><code>wall_clock = total_task_seconds / total_slots / efficiency</code></pre>
 <ul>
@@ -330,7 +403,7 @@
 </ul>
 <p>This means doubling cluster size halves wall-clock until you hit the tail. For SF=10000, 160 slots is the empirical inflection point — beyond that you start chasing 5-minute tail tasks.</p>
 
-<h2 id="checklist">9. Operational checklist</h2>
+<h2 id="checklist">10. Operational checklist</h2>
 <p>Before launching:</p>
 <ul class="checklist">
   <li><code>dsdgen</code> and <code>tpcds.idx</code> present on the launching node, mentioned in <code>--files</code>.</li>
@@ -343,7 +416,7 @@
 <p>After completion, validate via row counts. Spec totals: SF=1000 → 6,347,386,006 rows; SF=10000 → 56,678,668,681 rows.</p>
 
 <footer>
-  © 2026 Tom Zeng (<a href="https://github.com/tomz">@tomz</a>) · Generated 2026-04-18 · Part of the <code>tpcds-fast-datagen</code> project.
+  © 2026 Tom Zeng (<a href="https://github.com/tomz">@tomz</a>) · Generated 2026-04-20 · Part of the <code>tpcds-fast-datagen</code> project.
 </footer>
 
 </body>
