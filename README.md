@@ -22,7 +22,7 @@ Existing TPC-DS data generators each fail at a different scale (**SF** = TPC-DS 
 
 - **SF ≤ 50** → DuckDB engine: in-process `dsdgen()` + `COPY ... PARQUET`. As fast as DuckDB itself.
 - **SF > 50** → dsdgen-multiprocess engine: shards via the official C `dsdgen -PARALLEL`, streams `.dat` → Parquet through PyArrow with **constant memory per worker** (~200 MB). Bound only by local disk.
-- **SF ≥ 1000** (distributed) → `spark_tpcds_gen.py`: same per-task logic on a Spark/YARN cluster. Proven at **SF=10000 (3.6 TB) in 3h51m on 10× E16ads_v5**.
+- **SF ≥ 1000** (distributed) → `spark_tpcds_gen.py`: same per-task logic on a Spark/YARN cluster. Proven at **SF=30,000 (11.85 TB) in 3 h 10 m on 5× E32ads_v5**.
 
 Output is always Parquet with calibrated row groups, sane TPC-DS types (decimals, dates, time32), and one subdirectory per table.
 
@@ -31,19 +31,25 @@ Output is always Parquet with calibrated row groups, sane TPC-DS types (decimals
 ### Single node (CLI)
 
 ```bash
-# Install from a GitHub Release (PyPI not yet — see Releases page for the latest tag)
+# 1. Install the wheel (not on PyPI yet — see Releases for the latest tag)
 pip install https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.2/tpcds_fast_datagen-0.3.2-py3-none-any.whl
-# or install from source:
-#   pip install git+https://github.com/tomz/tpcds-fast-datagen
 
-# SF=1 — auto picks DuckDB engine, ~25s
-tpcds-gen --scale 1 --output /tmp/tpcds_sf1
+# 2. Grab a prebuilt `dsdgen` for your platform (linux-x86_64, linux-arm64, macos-arm64, macos-x86_64)
+tpcds-gen install-dsdgen
 
-# SF=100 — auto picks dsdgen-multiprocess, ~16 min on 16 cores
-tpcds-gen --scale 100 --output /mnt/data/tpcds_sf100 --parallel 8
+# 3. (Optional) sanity-check the environment
+tpcds-gen doctor
 
-# Force a specific engine (override the auto threshold)
-tpcds-gen --scale 50 --engine dsdgen --output /tmp/tpcds_sf50
+# 4. Generate
+tpcds-gen --scale 1   --output /tmp/tpcds_sf1                      # ~25 s, DuckDB engine (auto)
+tpcds-gen --scale 100 --output /mnt/data/tpcds_sf100 --parallel 8  # ~16 min on 16 cores, dsdgen-multiprocess
+tpcds-gen --scale 50  --output /tmp/tpcds_sf50 --engine dsdgen     # force a specific engine
+```
+
+No `dsdgen` for your platform in Releases, or you're on an old-glibc cluster (e.g. HDInsight)? Build from source:
+
+```bash
+tpcds-gen install-dsdgen --from-source   # clones databricks/tpcds-kit and `make OS=LINUX` into the cache
 ```
 
 ### Distributed (Spark / YARN / notebooks)
@@ -51,8 +57,14 @@ tpcds-gen --scale 50 --engine dsdgen --output /tmp/tpcds_sf50
 **From a notebook (Fabric, Databricks, Jupyter) or Livy session:**
 
 ```python
-# On Fabric / Databricks / Jupyter, install from the GitHub Release (not yet on PyPI)
+# Install the wheel + pyarrow. The package is not on PyPI yet; grab the release wheel.
 %pip install https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.2/tpcds_fast_datagen-0.3.2-py3-none-any.whl pyarrow
+
+# Point at a prebuilt dsdgen in blob/S3/GCS. The library will auto-download it
+# to every executor on first use. Alternatives: set DSDGEN_PATH, or use
+# spark-submit --files to ship a binary you already have.
+import os
+os.environ["DSDGEN_URL"] = "abfs://public@myacct.dfs.core.windows.net/tpcds/dsdgen-linux-x86_64"
 
 from tpcds_fast_datagen.spark import generate
 result = generate(spark, scale=1000, output="abfs:///tpcds/sf1000")
@@ -180,7 +192,9 @@ See [`docs/spark-sizing-best-practices.md`](docs/spark-sizing-best-practices.md)
 
 - **v0.1** ✓ shipped: DuckDB engine + dsdgen-multiprocess engine + Parquet output
 - **v0.2** ✓ shipped: `spark_tpcds_gen.py` for distributed generation (SF=10000 proven)
-- **v0.3** in progress: auto-engine selection (`--engine auto`), benchmark harness, Spark sizing docs
+- **v0.3.0** ✓ shipped: auto-engine selection (`--engine auto`), benchmark harness, Spark sizing docs, Spark Python API
+- **v0.3.1** ✓ shipped: int64 fix for `*_ticket_number` / `*_order_number` at SF ≥ 10K (see CHANGELOG)
+- **v0.3.2** ✓ shipped: `tpcds-gen doctor`, `tpcds-gen install-dsdgen`, `DSDGEN_URL` auto-bootstrap, prebuilt dsdgen binaries for linux/macOS × x86_64/arm64
 - **v0.4**: fsspec support (S3, ADLS, GCS) for the single-node tool, Parquet validation
 - **v1.0**: Rust core with PyO3 bindings — target 5–10× faster than the dsdgen+pyarrow streaming path
 
