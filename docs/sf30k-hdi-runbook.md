@@ -109,7 +109,8 @@ az storage blob upload --account-name <account> --container-name <container> \
 ```
 
 If glibc compatibility bites, see `docs/live-test-status.md` for the
-on-cluster build pattern (`hdi_build_dsdgen.py`).
+on-cluster build pattern, or run `tpcds-gen install-dsdgen --from-source`
+on one of the worker nodes to build against the cluster's glibc.
 
 ---
 
@@ -165,7 +166,7 @@ on every executor's Python path **before** the first task spawns. HDI
 
 ### 5.1 Build a portable venv on the cluster
 
-SSH in and run the same `hdi_build_venv.py` pattern from the live tests:
+SSH in and follow the venv-build pattern from [`docs/live-test-status.md`](live-test-status.md):
 
 ```bash
 ssh sshuser@$NAME-ssh.azurehdinsight.net
@@ -475,5 +476,9 @@ For the project's `docs/live-test-status.md` and CHANGELOG:
 - [`docs/spark-sizing-best-practices.md`](spark-sizing-best-practices.md) — calibrated wall-clock model
 - [`docs/live-test-status.md`](live-test-status.md) — HDI Livy / Fabric SJD workarounds, dsdgen + venv bootstrap
 - [`docs/notebooks-and-livy.md`](notebooks-and-livy.md) — Spark API usage
-- [`/tmp/tpcds-live-tests/hdi_build_venv.py`](.) — venv tarball builder (developer-side)
-- [`/tmp/tpcds-live-tests/hdi_build_dsdgen.py`](.) — on-cluster dsdgen builder (developer-side)
+- `hdi_build_venv.py` / `hdi_build_dsdgen.py` — developer-side helpers that live
+  outside the repo (in `/tmp/tpcds-live-tests/` on the author's box) used to
+  build the portable venv tarball and an on-cluster `dsdgen` for HDI. Not
+  required to use this package — `tpcds-gen install-dsdgen` now covers the
+  common case; see [`docs/live-test-status.md`](live-test-status.md) for the
+  exact steps they implement.

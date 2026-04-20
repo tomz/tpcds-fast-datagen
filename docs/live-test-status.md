@@ -44,10 +44,12 @@ Fix:
 1. **One-time:** build a portable venv tarball **on the cluster itself**
    (so it links against the cluster's glibc) containing pyarrow 10.0.1 (the
    last release linking against `GLIBCXX_3.4.25`) plus the `tpcds_fast_datagen`
-   wheel. See `/tmp/tpcds-live-tests/hdi_build_venv.py`. Upload to wasbs.
+   wheel. Upload to wasbs.
 2. **One-time:** build `dsdgen` on the cluster too (pre-built binaries link
-   against `GLIBC_2.34`, image provides older). See `hdi_build_dsdgen.py`.
-   Use `make OS=LINUX dsdgen` to skip qgen (which needs yacc).
+   against `GLIBC_2.34`, image provides older). Run
+   `tpcds-gen install-dsdgen --from-source` on a worker node, or manually:
+   `git clone https://github.com/databricks/tpcds-kit && cd tpcds-kit/tools && make OS=LINUX dsdgen`
+   (skipping qgen avoids the yacc dependency).
 3. **Per submission:** ship the venv tarball via YARN's
    `--archives URI#NAME` mechanism, which unpacks it into every container's
    working dir at launch time, before Python spawns.
@@ -135,14 +137,18 @@ Submit it via `fabric_sjd_submit_v2.py`, which uses the standard
 
 ## Reference scripts
 
-In `/tmp/tpcds-live-tests/` (not checked in):
+In `/tmp/tpcds-live-tests/` (author's box, not checked in — they're
+dev-local scratchpads, not part of the supported surface):
 
 - `hdi_env_probe.py`, `hdi_python_scan.py` — diagnostics that confirmed
   every Python on the HDI image has a broken pyarrow.
 - `hdi_pip_install.py` — proves `pip install --target` works once `HOME`
   is overridden.
-- `hdi_build_venv.py` — builds the portable venv tarball.
-- `hdi_build_dsdgen.py` — builds dsdgen on-cluster.
+- `hdi_build_venv.py` — builds the portable venv tarball (the steps it
+  runs are described in §"HDI: venv workaround" above; for most users,
+  `pip install` into a fresh venv + `tar czf` is sufficient).
+- `hdi_build_dsdgen.py` — builds dsdgen on-cluster (equivalent to
+  `tpcds-gen install-dsdgen --from-source`).
 - `hdi_livy_v2.py` — HDI Livy entrypoint using `--archives`.
 - `fabric_sjd_v2.py` — Fabric SJD entrypoint with broadcast-bootstrap.
 - `fabric_sjd_submit_v2.py` — Fabric SJD submitter.

@@ -1,0 +1,115 @@
+name: Build prebuilt dsdgen binaries
+
+# Builds dsdgen for {linux-x86_64, linux-arm64, macos-x86_64, macos-arm64}
+# from the upstream databricks/tpcds-kit repo and uploads the artifacts either
+# as workflow artifacts (on manual dispatch) or as assets attached to a
+# GitHub Release (when a tag matching v* is pushed).
+#
+# Each artifact is a single executable named `dsdgen-<platform>`, plus the
+# common `tpcds.idx` (platform-independent).
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: "Release tag to attach artifacts to (e.g. v0.3.1). Leave blank to only upload as workflow artifacts."
+        required: false
+        default: ""
+  release:
+    types: [published]
+
+permissions:
+  contents: write  # needed to upload release assets
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            make_os: LINUX
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            make_os: LINUX
+          - os: macos-13
+            platform: macos-x86_64
+            make_os: MACOS
+          - os: macos-14
+            platform: macos-arm64
+            make_os: MACOS
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout tpcds-kit
+        uses: actions/checkout@v4
+        with:
+          repository: databricks/tpcds-kit
+          path: tpcds-kit
+
+      - name: Install build tools (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make bison flex
+
+      - name: Install build tools (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          # bison/flex are usually available via Xcode CLT; install only if missing.
+          which bison || brew install bison
+          which flex  || brew install flex
+
+      - name: Build dsdgen
+        run: |
+          cd tpcds-kit/tools
+          # gcc >= 14 rejects K&R-style implicit-int in tpcds-kit/date.c by
+          # default. The Makefile overrides CFLAGS, so we inject via the
+          # per-OS *_CFLAGS hook (LINUX_CFLAGS / MACOS_CFLAGS).
+          EXTRA='-g -Wall -Wno-implicit-int -Wno-implicit-function-declaration -Wno-error=implicit-int -Wno-error=implicit-function-declaration'
+          make OS=${{ matrix.make_os }} ${{ matrix.make_os }}_CFLAGS="$EXTRA"
+          file dsdgen || true
+          ls -l dsdgen tpcds.idx
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p out
+          cp tpcds-kit/tools/dsdgen  "out/dsdgen-${{ matrix.platform }}"
+          cp tpcds-kit/tools/tpcds.idx out/tpcds.idx
+          cd out
+          shasum -a 256 "dsdgen-${{ matrix.platform }}" tpcds.idx > "sha256-${{ matrix.platform }}.txt"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsdgen-${{ matrix.platform }}
+          path: out/*
+          retention-days: 30
+
+      - name: Upload to release (on release event)
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "out/dsdgen-${{ matrix.platform }}" \
+            "out/sha256-${{ matrix.platform }}.txt" \
+            --clobber
+          # tpcds.idx is the same everywhere — upload once (linux-x86_64 job)
+          if [ "${{ matrix.platform }}" = "linux-x86_64" ]; then
+            gh release upload "${{ github.event.release.tag_name }}" out/tpcds.idx --clobber
+          fi
+
+      - name: Upload to release (on manual dispatch)
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_to_release != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ inputs.upload_to_release }}" \
+            "out/dsdgen-${{ matrix.platform }}" \
+            "out/sha256-${{ matrix.platform }}.txt" \
+            --clobber
+          if [ "${{ matrix.platform }}" = "linux-x86_64" ]; then
+            gh release upload "${{ inputs.upload_to_release }}" out/tpcds.idx --clobber
+          fi

@@ -9,7 +9,7 @@ description = "The fast TPC-DS data generator — parallel, streaming, Parquet-n
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 authors = [
     { name = "Tom Zeng", email = "11783+tomz@users.noreply.github.com" },
 ]
@@ -36,7 +36,7 @@ dependencies = [
     "pyarrow>=11.0",
     "click>=8.0",
     "rich>=13.0",
-    "duckdb>=0.10",
+    "duckdb>=1.0",
 ]
 
 [project.scripts]

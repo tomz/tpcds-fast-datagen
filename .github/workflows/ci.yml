@@ -50,3 +50,32 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  install-dsdgen-from-source:
+    # Exercises `tpcds-gen install-dsdgen --from-source` on a modern GCC
+    # (Ubuntu 24.04 ships gcc-13/gcc-14 which reject tpcds-kit's K&R prototypes
+    # unless we inject -Wno-error=implicit-int via LINUX_CFLAGS). Catches
+    # regressions in the CLI's make-invocation fix.
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git make gcc bison flex
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run install-dsdgen --from-source
+        run: tpcds-gen install-dsdgen --from-source
+      - name: Run doctor
+        run: tpcds-gen doctor
+      - name: Generate SF=1 end-to-end
+        run: |
+          tpcds-gen --scale 1 --engine dsdgen --output /tmp/sf1 --overwrite
+          python -c "import pyarrow.parquet as pq; t=pq.read_table('/tmp/sf1/date_dim'); assert t.num_rows==73049, f'date_dim has {t.num_rows} rows, expected 73049'; print('date_dim rows OK')"

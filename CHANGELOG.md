@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`tpcds-gen doctor`** — environment diagnostic subcommand. Reports Python
+  version, pyarrow, duckdb (+ tpcds extension), dsdgen/tpcds.idx location, and
+  pyspark. Exits nonzero if required pieces are missing. Replaces the
+  one-crash-at-a-time discovery pattern that earlier users hit.
+- **`tpcds-gen install-dsdgen`** — downloads a prebuilt `dsdgen` binary for the
+  current platform from the project's GitHub Releases into
+  `~/.cache/tpcds-fast-datagen/`. `--from-source` clones `databricks/tpcds-kit`
+  and builds against the local glibc (use this on HDInsight / older cluster
+  images where prebuilts fail with `GLIBC_2.34` not found).
+- **`DSDGEN_URL` env var** — when set and no local `dsdgen` is found, the
+  binary (and a sibling `tpcds.idx`, or `DSDGEN_IDX_URL` if set) is downloaded
+  from the URL into the cache. Supports `http(s)://`, `file://`, and
+  `abfs://`/`s3://`/`wasbs://`/`gs://` via `fsspec`. Lets Fabric / Databricks
+  notebooks bootstrap a working `dsdgen` without `git clone` / `make`.
+- **Prebuilt `dsdgen` binaries** attached to GitHub Releases, built by
+  `.github/workflows/build-dsdgen.yml` for `{linux-x86_64, linux-arm64,
+  macos-x86_64, macos-arm64}`. The workflow runs on release publish and on
+  manual dispatch.
+- `tpcds_fast_datagen.binary.install_dsdgen_from_url()`, `cache_dir()`,
+  `platform_tag()`, `sha256sum()` — reusable helpers for programmatic
+  bootstrap from notebooks.
+
+### Changed
+- CLI restructured as a click group with a default subcommand. The legacy
+  flat form (`tpcds-gen --scale 1 --output /tmp/sf1`) still works identically
+  — it now routes through `generate` under the hood.
+- `dsdgen` lookup order extended: `DSDGEN_PATH` → well-known paths →
+  `~/.cache/tpcds-fast-datagen/dsdgen` → system `PATH` → `DSDGEN_URL` download.
+- The `dsdgen not found` error message now suggests `tpcds-gen install-dsdgen`
+  first (the easy path) and only falls back to the `git clone && make`
+  instructions as the last option.
+- `requires-python` bumped from `>=3.8` to `>=3.9` to match actual usage
+  (PEP 604 `str | None` and PEP 585 `tuple[str, str]` annotations appear
+  throughout `src/tpcds_fast_datagen/spark/` and would fail to import on
+  3.8 without `from __future__ import annotations`, which wasn't applied
+  everywhere).
+- `duckdb` minimum bumped from `>=0.10` to `>=1.0`.
+- README notebook example no longer claims `%pip install tpcds-fast-datagen`
+  (not on PyPI yet) — points at the v0.3.1 GitHub Release wheel URL instead.
+
+### Fixed
+- `docs/sf30k-hdi-runbook.md` and `docs/live-test-status.md`: dangling
+  references to developer-local scratch scripts (`hdi_build_venv.py`,
+  `hdi_build_dsdgen.py` in `/tmp/tpcds-live-tests/`) replaced with pointers
+  to `tpcds-gen install-dsdgen --from-source` and the in-repo live-test docs.
+
 ## [0.3.1] — 2026-04-20
 
 ### Fixed

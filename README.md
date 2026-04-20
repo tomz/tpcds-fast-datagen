@@ -51,7 +51,8 @@ tpcds-gen --scale 50 --engine dsdgen --output /tmp/tpcds_sf50
 **From a notebook (Fabric, Databricks, Jupyter) or Livy session:**
 
 ```python
-%pip install tpcds-fast-datagen pyarrow
+# On Fabric / Databricks / Jupyter, install from the GitHub Release (not yet on PyPI)
+%pip install https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.1/tpcds_fast_datagen-0.3.1-py3-none-any.whl pyarrow
 
 from tpcds_fast_datagen.spark import generate
 result = generate(spark, scale=1000, output="abfs:///tpcds/sf1000")

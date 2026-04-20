@@ -101,10 +101,21 @@ def _resolve_dsdgen_on_executor(explicit: str | None = None) -> str:
 
 
 def _is_remote(path: str) -> bool:
-    # True for any URI scheme (abfss://, wasbs://, s3a://, hdfs://, ...).
-    # Databricks dbfs:/ is special-cased in normalize_output() to use the
-    # POSIX FUSE mount (/dbfs/...) instead of going through hdfs dfs -put.
+    # True for any URI scheme that must go through ``hdfs dfs -put``
+    # (abfss://, wasbs://, s3a://, hdfs://, ...). ``file://`` URIs are just
+    # local paths with a scheme decoration — strip it and treat as POSIX.
+    # Databricks ``dbfs:/`` is special-cased in normalize_output() to use the
+    # POSIX FUSE mount (/dbfs/...) instead of going through ``hdfs dfs -put``.
+    if path.startswith("file://"):
+        return False
     return "://" in path
+
+
+def _strip_file_scheme(path: str) -> str:
+    """``file:///tmp/x`` → ``/tmp/x``; other inputs are returned unchanged."""
+    if path.startswith("file://"):
+        return path[len("file://"):]
+    return path
 
 
 def normalize_output(path: str) -> str:
@@ -112,10 +123,13 @@ def normalize_output(path: str) -> str:
 
     Currently:
         ``dbfs:/foo/bar`` -> ``/dbfs/foo/bar`` on Databricks runtimes.
+        ``file:///foo/bar`` -> ``/foo/bar`` for local filesystems.
     """
     if path.startswith("dbfs:/") and not path.startswith("dbfs://"):
         # dbfs:/FileStore/...  ->  /dbfs/FileStore/...
         return "/dbfs/" + path[len("dbfs:/"):]
+    if path.startswith("file://"):
+        return _strip_file_scheme(path)
     return path
 
 
