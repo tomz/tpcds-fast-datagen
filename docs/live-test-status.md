@@ -1,24 +1,28 @@
 # Live integration test status
 
 Status of end-to-end test runs of `tpcds-fast-datagen` against real cloud
-Spark services. Last verified **2026-04-19**. Scripts and raw logs live
-outside the repo in `/tmp/tpcds-live-tests/` (developer's box).
+Spark services. Last verified **2026-04-21** (HDI Livy paths re-verified
+via the new `--via-livy` flow in 0.4.0; SF=10K and SF=30K results
+preserved from 2026-04-19/20 measurements).
 
 ## Matrix
 
-All targeted submission paths verified at SF=1 and SF=100.
+| Platform     | Submission path                          | SF=1    | SF=100  | SF=10K   | SF=30K  | Notes |
+|--------------|------------------------------------------|---------|---------|----------|---------|-------|
+| HDInsight 5.1 | `tpcds-gen-spark-submit --hdi --via-livy` | ✅      | ✅      | ✅ 1 h 41 m | ✅ 3 h 10 m | **0.4.0 just-works flow.** See [`hdinsight-quickstart.md`](hdinsight-quickstart.md) and [`sf30k-hdi-runbook.md`](sf30k-hdi-runbook.md) |
+| HDInsight 5.1 | `spark-submit` (manual)                  | ✅ dev  | ✅ dev  | —        | —       | Original development path; superseded by --via-livy |
+| HDInsight 5.1 | Livy batch (v2, manual)                  | ✅ ~30s | ✅ ~160s | —       | —       | Pre-0.4.0 path; subsumed by `--via-livy` (no manual `--archives` plumbing) |
+| Fabric       | Livy session                             | ✅      | ✅      | —        | —       | |
+| Fabric       | Spark Job Definition (v2)                | ✅ 82 s | ✅ 444 s (959M rows) | — | — | Needs broadcast-bytes + high-fanout bootstrap workaround |
+| Fabric       | Notebook                                 | ✅      | ✅      | —        | —       | |
+| Databricks   | `spark_python_task`                      | ✅      | ✅      | —        | —       | |
+| Databricks   | `notebook_task`                          | ✅      | ✅      | —        | —       | |
 
-| Platform     | Submission path           | SF=1   | SF=100        | Notes |
-|--------------|---------------------------|--------|---------------|-------|
-| HDInsight    | `spark-submit`            | ✅ dev | ✅ dev         | Original development path |
-| HDInsight    | Livy batch (v2)           | ✅ ~30s | ✅ ~160s      | Needs `--archives venv.tar.gz#venv` workaround |
-| Fabric       | Livy session              | ✅     | ✅             | |
-| Fabric       | Spark Job Definition (v2) | ✅ 82s | ✅ 444s (959M rows) | Needs broadcast-bytes + high-fanout bootstrap workaround |
-| Fabric       | Notebook                  | ✅     | ✅             | |
-| Databricks   | `spark_python_task`       | ✅     | ✅             | |
-| Databricks   | `notebook_task`           | ✅     | ✅             | |
+The SF=10K and SF=30K runs were on a 5× E32ads_v5 + 2× E8ads_v5 cluster
+against ABFS — see [`sf30k-hdi-runbook.md`](sf30k-hdi-runbook.md) §6 for
+per-table breakdown and cost analysis.
 
-## Workarounds
+## Workarounds (legacy — most fixed in 0.4.0)
 
 Two of the seven paths needed non-obvious workarounds. The shared root cause:
 **`SparkContext.addPyFile` does not propagate a wheel to executor python

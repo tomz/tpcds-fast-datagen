@@ -84,6 +84,25 @@ def generate(
     """
     sc = spark.sparkContext
 
+    # If the caller supplies a local dsdgen_path on the driver, ship it (and a
+    # sibling tpcds.idx if present) to executors via SparkFiles so that
+    # _resolve_dsdgen_on_executor finds it cluster-wide. Without this, the
+    # path would only be valid on the driver — the heterogeneous-cluster
+    # footgun fixed in 0.4.0.
+    if dsdgen_path:
+        import os as _os
+        if _os.path.exists(dsdgen_path):
+            try:
+                sc.addFile(dsdgen_path)
+                idx_sibling = _os.path.join(_os.path.dirname(dsdgen_path), "tpcds.idx")
+                if _os.path.exists(idx_sibling):
+                    sc.addFile(idx_sibling)
+            except Exception:
+                # addFile is idempotent-ish but can complain if same file added
+                # twice in the same SparkContext; ignore — _resolve_* will still
+                # find whatever's already in SparkFiles.
+                pass
+
     if chunks is None:
         num_executors = int(sc.getConf().get("spark.executor.instances", "10"))
         executor_cores = int(sc.getConf().get("spark.executor.cores", "8"))

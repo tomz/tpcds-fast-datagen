@@ -266,6 +266,50 @@ def doctor_cmd():
             optional=True,
         )
 
+    # Optional: HDInsight readiness — conda-pack, java, libstdc++ GLIBCXX.
+    # These don't affect single-node runs but are required for the
+    # 'just-works' HDI flow (see docs/hdinsight-quickstart.md).
+    import shutil as _sh
+    _status(
+        "conda-pack (HDI optional)",
+        bool(_sh.which("conda-pack") or _sh.which("conda") or _sh.which("mamba") or _sh.which("micromamba")),
+        "(needed for `tpcds-gen package-env`)",
+        optional=True,
+    )
+
+    try:
+        import subprocess as _sp
+        java_v = _sp.run(["java", "-version"], capture_output=True, text=True, timeout=5)
+        ok_java = java_v.returncode == 0
+        ver_line = (java_v.stderr or java_v.stdout).splitlines()[0] if (java_v.stderr or java_v.stdout) else ""
+        _status("java (HDI optional)", ok_java, f"({ver_line})" if ok_java else "(not on PATH)", optional=True)
+    except (FileNotFoundError, Exception):
+        _status("java (HDI optional)", False, "(not on PATH)", optional=True)
+
+    # libstdc++ GLIBCXX symbols — HDI 5.1 stops at GLIBCXX_3.4.25 and modern
+    # pyarrow wheels need 3.4.26+. We surface the highest symbol so users on
+    # HDI know to use `package-env` rather than the host pyarrow.
+    try:
+        import subprocess as _sp
+        # Find libstdc++ via the dynamic linker
+        libpath = _sp.run(["ldconfig", "-p"], capture_output=True, text=True, timeout=5)
+        libline = next((ln for ln in libpath.stdout.splitlines() if "libstdc++.so.6" in ln), "")
+        libfile = libline.rsplit(" ", 1)[-1].strip() if libline else ""
+        if libfile and os.path.exists(libfile):
+            syms = _sp.run(["strings", libfile], capture_output=True, text=True, timeout=10)
+            glibcxx = sorted(
+                {ln for ln in syms.stdout.splitlines() if ln.startswith("GLIBCXX_")},
+                key=lambda s: tuple(int(x) for x in s.split("_", 1)[1].split(".")),
+            )
+            highest = glibcxx[-1] if glibcxx else "?"
+            modern = highest >= "GLIBCXX_3.4.26"
+            detail = f"({libfile}, max {highest})"
+            if not modern:
+                detail += " — modern pyarrow wheels won't import; use `tpcds-gen package-env`"
+            _status("libstdc++ GLIBCXX (HDI)", modern, detail, optional=True)
+    except Exception:  # noqa: BLE001
+        pass
+
     click.echo("")
     if not ok:
         click.echo("doctor: FAIL — one or more required components missing.", err=True)
@@ -295,16 +339,40 @@ _PREBUILT_DEFAULT_TAG = "v0.3.2"
 @click.option("--platform", "platform_override", type=str, default=None,
               help="Platform tag (e.g. linux-x86_64, linux-arm64, macos-x86_64, macos-arm64). "
                    "Defaults to auto-detected current platform.")
+@click.option("--target", type=click.Choice(["auto", "host", "hdi-glibc-2.27", "manylinux_2_17"]),
+              default="auto", show_default=True,
+              help="Build target. 'auto'/'host' = current platform's prebuilt. "
+                   "'hdi-glibc-2.27' / 'manylinux_2_17' = old-glibc binary that "
+                   "runs on HDInsight 5.1 (Ubuntu 18.04, glibc 2.27). If no such "
+                   "release asset exists yet, falls through to --from-source.")
 @click.option("--from-source", is_flag=True,
               help="Ignore prebuilts; git clone tpcds-kit and `make OS=LINUX` into the cache.")
-def install_dsdgen_cmd(url, idx_url, tag, platform_override, from_source):
+def install_dsdgen_cmd(url, idx_url, tag, platform_override, target, from_source):
     """Install a ``dsdgen`` binary into the local cache (``~/.cache/tpcds-fast-datagen/``).
 
     By default we download a prebuilt binary for the current platform from the
     project's GitHub Releases. If your platform isn't covered (or you don't trust
     the prebuilt), pass ``--from-source`` to clone tpcds-kit and build it.
+
+    For HDInsight 5.1 (glibc 2.27), pass ``--target hdi-glibc-2.27`` — until a
+    matching release asset is published, this auto-falls-through to
+    ``--from-source`` building against the host's glibc, which is the right
+    answer when run on the HDI headnode itself.
     """
     from .binary import cache_dir, install_dsdgen_from_url, platform_tag
+
+    # `--target hdi-glibc-2.27` rewrites the URL pattern; if the release
+    # asset doesn't exist yet, the download will 404 and we'll fall through
+    # to --from-source (which builds against the host glibc — exactly what
+    # you want when running on the HDI headnode).
+    auto_fallback_to_source = False
+    if target in ("hdi-glibc-2.27", "manylinux_2_17") and not from_source and url is None:
+        plat = "linux-x86_64-manylinux_2_17"
+        url = f"{_PREBUILT_BASE}/{tag}/dsdgen-{plat}"
+        if idx_url is None:
+            idx_url = f"{_PREBUILT_BASE}/{tag}/tpcds.idx"
+        auto_fallback_to_source = True
+        click.echo(f"target={target}: trying {url}")
 
     if from_source:
         _install_from_source(cache_dir())
@@ -321,6 +389,11 @@ def install_dsdgen_cmd(url, idx_url, tag, platform_override, from_source):
     try:
         path = install_dsdgen_from_url(url, idx_url=idx_url)
     except Exception as e:  # noqa: BLE001
+        if auto_fallback_to_source:
+            click.echo(f"No prebuilt for {target} (yet): {e}", err=True)
+            click.echo("Falling back to --from-source build against host glibc.", err=True)
+            _install_from_source(cache_dir())
+            return
         click.echo(f"Download failed: {e}", err=True)
         click.echo("", err=True)
         click.echo(
@@ -400,6 +473,61 @@ def _install_from_source(dest_dir):
 def _which(name: str):
     import shutil as _sh
     return _sh.which(name)
+
+
+# ---------------------------------------------------------------------------
+# `tpcds-gen package-env` — build a conda-pack tarball for HDI executors
+# ---------------------------------------------------------------------------
+
+@main.command("package-env")
+@click.option("--output", "-o", type=click.Path(dir_okay=False), required=True,
+              help="Output path for the tarball (e.g. /tmp/env.tar.gz).")
+@click.option("--python", "python_version", default="3.9", show_default=True,
+              help="Python version for the env.")
+@click.option("--pyarrow", "pyarrow_version", default="14", show_default=True,
+              help="pyarrow version. Don't bump past 14 for HDI 5.1 — newer "
+                   "wheels need GLIBCXX_3.4.26+ which HDI lacks.")
+@click.option("--duckdb", "duckdb_version", default="1.0", show_default=True)
+@click.option("--extra-package", "extra_packages", multiple=True,
+              help="Additional conda-forge packages to include (repeatable).")
+@click.option("--wheel", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Path to a pre-built tpcds_fast_datagen wheel. If omitted, "
+                   "we look in <repo>/dist/ and fall back to `python -m build`.")
+@click.option("--upload", default=None,
+              help="Optional URI to copy the tarball to (wasbs:// / abfs:// / hdfs://).")
+def package_env_cmd(output, python_version, pyarrow_version, duckdb_version,
+                    extra_packages, wheel, upload):
+    """Build a conda-pack tarball ready for ``spark-submit --archives``.
+
+    This is the "ship a working Python to HDI" step from the runbook,
+    automated. The resulting tarball, when paired with ``--archives
+    env.tar.gz#env`` and ``PYSPARK_PYTHON=./env/bin/python``, gives every
+    executor a self-contained env that doesn't depend on HDI's ancient
+    libstdc++ (GLIBCXX_3.4.25).
+
+    Run on the HDI headnode (or any Linux box with conda + hadoop client),
+    then pass the resulting URI to ``tpcds-gen-spark-submit --hdi --env``.
+
+    See ``docs/hdinsight-quickstart.md`` for the end-to-end flow.
+    """
+    from .hdi import package_env
+
+    try:
+        out = package_env(
+            output,
+            python_version=python_version,
+            pyarrow_version=pyarrow_version,
+            duckdb_version=duckdb_version,
+            extra_packages=list(extra_packages) if extra_packages else None,
+            wheel=wheel,
+            upload=upload,
+        )
+    except RuntimeError as e:
+        click.echo(f"package-env failed: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Built env tarball: {out}")
+    if upload:
+        click.echo(f"Uploaded to: {upload}")
 
 
 if __name__ == "__main__":

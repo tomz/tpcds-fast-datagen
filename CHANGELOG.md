@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.2] — 2026-04-20
+## [0.4.0] — 2026-04-21
+
+### Added
+- **HDI 5.1 "just-works" profile** — the same 5-command workflow that
+  TPC-H-fast-datagen 0.2.0 introduced, ported to TPC-DS:
+  - **`tpcds-gen package-env`** — builds a conda-pack tarball
+    (`python=3.9 pyarrow=14 duckdb=1.0`) and optionally uploads it to
+    WASBS/ABFS. Sidesteps HDI's ancient `GLIBCXX_3.4.25` ceiling.
+  - **`tpcds-gen install-dsdgen --target hdi-glibc-2.27`** — tries a
+    manylinux_2_17 prebuilt; auto-falls-through to `--from-source` on the
+    HDI headnode (builds against glibc 2.27).
+  - **`tpcds-gen-spark-submit --hdi --env --binary [--dists] --via-livy`**
+    — splices in the `--archives`/`--files`/`PYSPARK_PYTHON` flag block,
+    POSTs to `/livy/batches` with the required `X-Requested-By` CSRF
+    header, and polls until terminal.
+  - **`tpcds_fast_datagen.hdi`** — new module: `package_env()`,
+    `livy_submit()`, `_ensure_bootstrap_uri()` (stdlib `urllib` only).
+  - **SparkFiles footgun fix** — `_resolve_dsdgen_on_executor` now lets
+    SparkFiles win over an explicit driver-side path; `sc.addFile()` is
+    called automatically when `dsdgen_path` is provided to `generate()`.
+  - **`docs/hdinsight-quickstart.md`** — 5-command quickstart guide.
+  - **`docs/sf30k-hdi-runbook.md`** — banner added at the top pointing to
+    the new quickstart as the simple path (runbook retained as the
+    deep dive).
+  - **`tpcds-gen doctor`** — 3 new HDI-readiness checks: `conda-pack`,
+    `java`, and `libstdc++ GLIBCXX` (surfaces highest symbol for
+    GLIBCXX_3.4.25 / 3.4.26 comparison).
+
+
 
 ### Added
 - **`tpcds-gen doctor`** — environment diagnostic subcommand. Reports Python

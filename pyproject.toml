@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tpcds-fast-datagen"
-version = "0.3.2"
+version = "0.4.0"
 description = "The fast TPC-DS data generator — parallel, streaming, Parquet-native, single-node and distributed"
 readme = "README.md"
 license = "MIT"

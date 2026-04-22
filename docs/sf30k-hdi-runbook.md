@@ -1,121 +1,150 @@
-# SF=30K on HDInsight: end-to-end runbook
+# SF≥10K on HDInsight: sizing & cost reference
+
+> **First time on HDInsight?** Start with
+> **[`docs/hdinsight-quickstart.md`](hdinsight-quickstart.md)** — five
+> commands, no manual venv plumbing. This document is the **deep dive**:
+> cluster sizing, storage choices, cost modeling, and the actual SF=10K /
+> SF=30K timings we measured on 2026-04-19/20.
+>
+> Most of the manual recipes that lived here in 0.3.x (hand-pinning
+> `pyarrow==10.0.1`, `tar czf venv.tar.gz`, writing a `spark-submit`
+> invocation by hand) are **obsolete in 0.4.0** — the quickstart absorbs
+> them. What stays here is the part you can't automate: choosing a worker
+> SKU, sizing disks, picking `chunks=`, deciding HDFS vs ABFS.
 
 **Author:** Tom Zeng ([@tomz](https://github.com/tomz))
-**Last updated:** 2026-04-20
-**Status:** ✓ executed — SF=10,000 (1 h 41 m) and SF=30,000 (3 h 10 m) on 5× E32ads_v5 against ABFS. See §13 for the full writeup.
-
-End-to-end procedure for generating TPC-DS at scale factor 30,000
-(~10.8 TB Parquet in the plan; **11.85 TB measured**) on a 5-node
-HDInsight Spark cluster. The original plan targeted HDFS on attached
-Standard HDDs; the actual runs wrote to ABFS hot-tier storage, which
-turned out to be **2.3× faster** than HDFS at the same node count
-(see §13.6).
+**Last updated:** 2026-04-21
+**Applies to:** `tpcds-fast-datagen` ≥ 0.4.0
+**Verified at:** SF=10,000 (1 h 41 m) and SF=30,000 (3 h 10 m) on
+5× E32ads_v5 against ABFS — see §6.
 
 ---
 
-## 1. Target
+## 1. When you need this document
 
-| | |
-|---|---|
-| Scale factor | **SF = 30,000** |
-| Output | HDFS, replication = 2 |
-| Output size | ~10.8 TB Parquet (one subdir per table) |
-| Total rows | ~190 B (across 25 tables) |
-| Wall-clock target | ~6–7 h |
-| Wall-clock budget | 12 h |
-| Total cost (list) | ~$110 (compute + storage for the run window) |
+The quickstart is sufficient up to ~SF=1000 on a default 5×E16ads_v5
+cluster. Past that, you'll bottleneck on one or more of: vCPU count, NVMe
+scratch space, attached HDD throughput, or the storage account's egress
+cap. This document tells you what to change.
 
----
-
-## 2. Cluster spec
-
-| component | value | notes |
-|---|---|---|
-| Region | `eastus2` | within EADSv5 quota; close to ABFS account |
-| HDI version | 5.1 | Spark 3.5 / Python 3.8 |
-| Cluster type | Spark | |
-| Worker SKU | **`Standard_E32ads_v5`** | 32 vCPU / 256 GB RAM / 1.2 TB local NVMe |
-| Worker count | **5** | 160 task slots total |
-| Headnode SKU | `Standard_E8ads_v5` | 8 vCPU / 64 GB; 2 nodes (HA) |
-| Worker attached disks | **16× S30** (1 TiB Standard HDD each) | 16 TB usable / node |
-| Disk type | `standard_lrs` | HDI-supported up to S30; up to 16 disks per worker |
-| HDFS replication | **2** | survives one node loss; cheaper than rep=3 for one-shot run |
-
-**Quota fit (East US 2):**
-- Subscription EADSv5 family vCPUs: 5×32 + 2×8 = **176** (limit 300, ✓)
-- HDI EADSv5 family cores: **176** (limit 200, ✓)
-
-**Capacity sanity-check:**
-- Output 10.8 TB × rep=2 = 21.6 TB / 5 nodes = **4.3 TB per node**
-- 16× S30 = **16 TB usable per node** — 270% headroom
-- HDFS rebalancing + Spark spill + logs — all easily covered
-
-**Throughput sanity-check:**
-- 21.6 TB written / 7 h ≈ 860 MB/s aggregate ≈ 172 MB/s per node sustained
-- Burst peak ~690 MB/s/node (4× sustained)
-- 16× S30 = 960 MB/s aggregate per node, capped at VM's 865 MB/s — clean fit
+| target SF | recommended cluster | rough wall time | document |
+|---:|---|---:|---|
+| 1 – 1000 | 5× E16ads_v5 (default) | sec to ~1 h | quickstart |
+| 1000 – 10,000 | 5× E16ads_v5 → 5× E32ads_v5 | 1 – 4 h | this doc, §2-§4 |
+| 10,000 – 30,000 | 5× E32ads_v5 + 16× S30 disks | 3 – 4 h | this doc, §2-§6 |
+| 30,000+ | scale workers up; consider rep=1 | 4 h+ | this doc, §6.4 |
 
 ---
 
-## 3. Pre-flight
+## 2. Cluster sizing
 
-### 3.1 Verify quota
+### 2.1 The four constraints
+
+For a single TPC-DS run, in priority order:
+
+1. **vCPU × executors → task-slot count.** Aim for `chunks ≥ 15 × slots`
+   to absorb tail-task drag. At 160 slots (5 × 32 cores), use
+   `chunks=2400` (15× ratio) to `chunks=4800` (30× ratio). 4800 is what
+   we used for SF=30K v2 — see §6.2 for why that mattered.
+
+2. **NVMe scratch per worker.** Each task writes its raw `.dat` shard to
+   `/mnt/tpch_*` before streaming to Parquet. At SF=30K, `chunks=4800`
+   gives ~5 GB per shard for `store_sales`. With 32 concurrent tasks per
+   worker that's 160 GB of live scratch. E32ads_v5's 1.2 TB NVMe absorbs
+   this with 7× headroom.
+
+3. **Attached HDD throughput** (only matters for `--output hdfs:///...`,
+   not ABFS). A single S30 caps at 60 MB/s; 16× S30 = 960 MB/s aggregate
+   per node, capped at the VM's 865 MB/s outbound. ABFS sidesteps this
+   entirely (see §3).
+
+4. **Storage account egress cap.** A standard ABFS Gen2 account caps at
+   60 Gbps regional egress. We saw zero `503 ServerBusy` events at peak
+   ~3 TB/h aggregate write to ABFS — well under the cap.
+
+### 2.2 Recommended SKUs
+
+| SF | worker SKU | workers | head SKU | extra disks |
+|---:|---|---:|---|---|
+| 1K – 10K | `Standard_E16ads_v5` (16 vCPU, 128 GB, 600 GB NVMe) | 5 | `Standard_E8ads_v5` × 2 | none |
+| 10K – 30K (ABFS output) | `Standard_E32ads_v5` (32 vCPU, 256 GB, 1.2 TB NVMe) | 5 | `Standard_E8ads_v5` × 2 | none |
+| 10K – 30K (HDFS output) | `Standard_E32ads_v5` | 5 | `Standard_E8ads_v5` × 2 | **16× S30 (1 TiB) per worker** |
+| 30K+ | scale workers up to fit your quota | 8-10 | `Standard_E8ads_v5` × 2 | match storage choice |
+
+### 2.3 Quota fit (East US 2 reference)
+
+A 5× E32ads_v5 + 2× E8ads_v5 cluster needs:
+
+- Subscription `Standard EADSv5 Family vCPUs`: 5×32 + 2×8 = **176**
+- HDI `StandardEadsV5Family` cores: **176** (HDI maintains its own quota)
+
+Check both before provisioning:
 
 ```bash
-SUB=c1f2cd4b-4e91-4a9f-9211-07df640f8610   # Fabric CAT Subscription
+SUB=<your-subscription-id>
 REGION=eastus2
-
-# Subscription-level EADSv5 family
 az vm list-usage --location $REGION -o table | grep -iE "EADSv5|Total Regional vCPUs"
-
-# HDI-specific EADSv5 family
 az rest --method get \
   --uri "https://management.azure.com/subscriptions/$SUB/providers/Microsoft.HDInsight/locations/$REGION/usages?api-version=2023-04-15-preview" \
-  --query 'value[?contains(to_string(name.value), `Eads`) || name.value==`cores`].{name:name.localizedValue, used:currentValue, limit:limit}' \
+  --query 'value[?contains(to_string(name.value), `Eads`)].{name:name.localizedValue, used:currentValue, limit:limit}' \
   -o table
 ```
 
-Need ≥ 176 free in **both** `Standard EADSv5 Family vCPUs` (sub) and
-`StandardEadsV5Family` (HDI). Delete idle EADSv5 clusters first if short.
+---
 
-### 3.2 Storage account
+## 3. HDFS vs ABFS for output
 
-Reuse an existing ABFS Gen2 account in the same region. The HDFS run
-itself writes only to local disks, but you'll want ABFS for:
-- the cluster's primary storage container (HDI requirement)
-- staging `dsdgen` + `tpcds.idx` so workers can `addFile` them
-- (optional) post-run distcp of the 10.8 TB Parquet output
+This is the single biggest knob. We measured a **2.3× throughput
+improvement** going from HDFS-on-attached-HDDs to ABFS at the same node
+count (SF=10K validation, §6.1).
 
-```bash
-# Confirm the account exists, in the right region
-az storage account show -n <account> --query '{loc:primaryLocation, kind:kind, hns:isHnsEnabled}' -o table
-# Must be `StorageV2` with `isHnsEnabled = true`.
-```
+| dimension | HDFS on attached S30s | ABFS Hot |
+|---|---|---|
+| write throughput per node | ~170 MB/s sustained | ~690 MB/s sustained |
+| node loss tolerance | rep=2 (33% disk overhead) | erasure-coded by Azure |
+| post-run copy needed | yes (distcp to ABFS or it dies with the cluster) | no |
+| disk provisioning cost | $40/disk-month × 80 disks = ~$3200/mo | nil |
+| operational complexity | ambari reconfig of `dfs.datanode.data.dir`, `chmod 1777 /mnt/tmp` | none |
 
-### 3.3 Build dsdgen + tpcds.idx (on a glibc-compatible box)
+**Recommendation: use ABFS unless you have a specific reason not to.** Pass
+`--output wasbs://container@account.blob.core.windows.net/path` directly
+to `tpcds-gen-spark-submit`. Skip the `--workernode-data-disks-per-node`
+flag at provision time.
 
-The cluster's image glibc may not match your dev box. Easiest path: build
-dsdgen *inside* the cluster after it's up, **OR** build on any Linux
-box with glibc ≤ 2.34 and stage to ABFS.
-
-```bash
-git clone https://github.com/databricks/tpcds-kit
-cd tpcds-kit/tools && make OS=LINUX dsdgen     # NOT plain `make` — qgen needs yacc
-
-# Upload to wasbs (cluster's primary storage)
-az storage blob upload --account-name <account> --container-name <container> \
-  --file dsdgen --name livetest/dsdgen --overwrite
-az storage blob upload --account-name <account> --container-name <container> \
-  --file tpcds.idx --name livetest/tpcds.idx --overwrite
-```
-
-If glibc compatibility bites, see `docs/live-test-status.md` for the
-on-cluster build pattern, or run `tpcds-gen install-dsdgen --from-source`
-on one of the worker nodes to build against the cluster's glibc.
+The historical reason to choose HDFS was "avoid ABFS egress costs during
+the run." But ABFS-internal traffic (cluster ↔ same-region storage
+account) is **free**. Only cross-region egress is billed.
 
 ---
 
-## 4. Provision the cluster
+## 4. Choosing `chunks`
+
+Pass via `tpcds-gen-spark-submit --chunks N` (or as the `chunks=` kwarg
+in `generate()`).
+
+| target | rule of thumb |
+|---|---|
+| SF ≤ 1000 | leave at default — auto-sizer picks ~96-230 |
+| SF = 10,000 | `chunks=2400` (15× slots) |
+| SF = 30,000 | `chunks=4800` (30× slots) — halved per-task time, dramatically improved load balancing |
+| SF > 30,000 | scale linearly with SF |
+
+**Why higher chunks helped at SF=30K:** at `chunks=2400`, the longest
+`store_sales` task ran 18 minutes; one straggler delayed the whole stage.
+At `chunks=4800`, per-task time dropped to 60-125 s, which made the tail
+recoverable via speculation (`spark.speculation=true`,
+`spark.speculation.quantile=0.85`, `spark.speculation.multiplier=1.4`).
+
+The auto-sizer doesn't go this high yet — pass explicitly for SF ≥ 10K.
+
+---
+
+## 5. Provisioning the cluster
+
+The `tpcds-gen` tool does not yet provision clusters. Use `az hdinsight
+create` directly.
+
+### 5.1 ABFS-output cluster (recommended)
 
 ```bash
 RG=tomz
@@ -123,7 +152,7 @@ NAME=tomz-spark-sf30k
 REGION=eastus2
 STORAGE_ACCT=<your-account>
 STORAGE_CONTAINER=<your-container>
-ADMIN_PW='<strong-password>'         # 10+ chars, mixed
+ADMIN_PW='<strong-password>'
 SSH_PW='<different-strong-password>'
 
 az hdinsight create \
@@ -131,9 +160,6 @@ az hdinsight create \
   -t spark --version 5.1 --location $REGION \
   --workernode-count 5 \
   --workernode-size standard_e32ads_v5 \
-  --workernode-data-disks-per-node 16 \
-  --workernode-data-disk-size 1024 \
-  --workernode-data-disk-storage-account-type standard_lrs \
   --headnode-size standard_e8ads_v5 \
   --storage-account $STORAGE_ACCT \
   --storage-container $STORAGE_CONTAINER \
@@ -141,345 +167,186 @@ az hdinsight create \
   --ssh-user sshuser --ssh-password "$SSH_PW"
 ```
 
-Provisioning takes **~15–25 min**. Watch:
+Provisioning takes ~15-25 min. Watch:
 
 ```bash
 az hdinsight show -n $NAME -g $RG --query 'properties.clusterState' -o tsv
 # Accepted -> InProgress -> Running
 ```
 
-Once `Running`, verify the disks landed correctly:
+### 5.2 HDFS-output cluster (if you must)
+
+Add the disk flags:
 
 ```bash
-ssh sshuser@$NAME-ssh.azurehdinsight.net 'sudo -u hdfs hdfs dfsadmin -report | head -40'
+az hdinsight create \
+  ... \
+  --workernode-data-disks-per-node 16 \
+  --workernode-data-disk-size 1024 \
+  --workernode-data-disk-storage-account-type standard_lrs
 ```
 
-Expected: 5 live datanodes, ~80 TB total HDFS capacity (5 nodes × 16 TB usable).
+After provisioning, you must reconfigure HDFS to actually use the disks
+(see §7.3 for the gotcha — Ambari REST is finicky here).
+
+### 5.3 Then run the quickstart
+
+Everything from `tpcds-gen package-env` through `tpcds-gen-spark-submit
+--hdi --via-livy` is the same as the small-SF case — see
+[`docs/hdinsight-quickstart.md`](hdinsight-quickstart.md). The only
+deltas at large SF are:
+
+- pass `--chunks` explicitly (see §4)
+- override Spark resource defaults: `--driver-memory`, `--executor-memory`,
+  `--executor-cores`, `--num-executors` via the `tpcds-gen-spark-submit`
+  trailing args
+
+Example for SF=30K:
+
+```bash
+tpcds-gen-spark-submit \
+    --hdi --via-livy https://$NAME.azurehdinsight.net \
+    --env wasbs://.../tpcds-env.tar.gz \
+    --binary wasbs://.../dsdgen \
+    --idx wasbs://.../tpcds.idx \
+    --scale 30000 --chunks 4800 \
+    --output wasbs://.../tpcds/sf30000 \
+    -- \
+    --num-executors 5 --executor-cores 32 --executor-memory 192g \
+    --conf spark.network.timeout=1800s \
+    --conf spark.task.maxFailures=4 \
+    --conf spark.speculation=true \
+    --conf spark.speculation.quantile=0.85 \
+    --conf spark.speculation.multiplier=1.4
+```
 
 ---
 
-## 5. Stage the package + binary
+## 6. Actual results (2026-04-19/20)
 
-The Spark variant (`tpcds_fast_datagen.spark.generate`) needs the wheel
-on every executor's Python path **before** the first task spawns. HDI
-5.1's image Python has known pyarrow issues (see `docs/live-test-status.md`)
-— ship a venv tarball via `--archives`.
+### 6.1 Timing summary
 
-### 5.1 Build a portable venv on the cluster
+| Run | Output | Wall-clock | Total written | Throughput | Outcome |
+|---|---|---|---|---|---|
+| SF=30K v1 (HDFS, chunks=2400, rep=2) | `hdfs:///tpcds/sf30000` | ~5 h before kill | 1.5 TB | ~0.3 TB/h | ❌ killed — int32 overflow on `ss_ticket_number` (`2307000001 > 2^31`) |
+| **SF=10K validation** (ABFS, chunks=4800, schema fix v0.3.1) | `wasbs://.../tpcds/sf10000` | **1 h 41 min** | 3.95 TB | ~2.4 TB/h | ✅ |
+| **SF=30K v2** (ABFS, chunks=4800, schema fix v0.3.1) | `wasbs://.../tpcds/sf30000` | **3 h 10 min** | 11.847 TB | ~3.7 TB/h | ✅ |
 
-SSH in and follow the venv-build pattern from [`docs/live-test-status.md`](live-test-status.md):
+### 6.2 Per-table breakdown (SF=30K v2)
 
-```bash
-ssh sshuser@$NAME-ssh.azurehdinsight.net
+| Table | Chunks | Size | Stage 3 task pace |
+|---|---|---|---|
+| store_sales | 4800 | 4.853 TB | ~125 s/task |
+| catalog_sales | 4800 | 3.910 TB | ~127 s/task |
+| web_sales | 4800 | 1.878 TB | ~73 s/task |
+| dimensions + small fact tables | ~213 | < 50 GB total | ~12 s/task each |
+| **Total** | 24,613 | **11.847 TB** | — |
 
-# On the headnode:
-PY=/usr/bin/miniforge/envs/py38/bin/python3
-$PY -m pip install --no-deps --target /tmp/_venv_site \
-    pyarrow==10.0.1
-$PY -m pip install --no-deps --target /tmp/_venv_site \
-    https://github.com/tomz/tpcds-fast-datagen/releases/download/v0.3.0/tpcds_fast_datagen-0.3.0-py3-none-any.whl
+### 6.3 Knobs that mattered
 
-cd /tmp && tar czf tpcds_venv.tar.gz -C _venv_site .
+The v1 → v2 throughput gain was **~12×**. Two changes mattered most:
 
-# Upload to wasbs
-hdfs dfs -put -f tpcds_venv.tar.gz wasbs:///livetest/tpcds_venv.tar.gz
-```
+1. **HDFS → ABFS** — removed datanode write-amp + sync overhead. ABFS
+   scales to ~60 Gbps egress on a standard storage account; we saw zero
+   `ServerBusy` / `EgressIsOverAccountLimit` / `503` events at peak ~3 TB/h.
+2. **chunks=2400 → 4800** — halved per-task runtime, dramatically improved
+   load balancing, shortened the failure-recovery tail.
 
-Why pyarrow 10.0.1: last release linking against `GLIBCXX_3.4.25`,
-which is what HDI 5.1's image provides. Newer pyarrow needs `3.4.26`
-and crashes on import.
+A third worth mentioning: `spark.task.maxFailures: 8 → 4` surfaced the
+int32 overflow bug in attempt 4 instead of attempt 8. Worth ~1 h of
+wasted compute on a deterministic-failure run.
 
-### 5.2 Stage dsdgen + idx (already done in §3.3 if you uploaded then)
+### 6.4 Beyond SF=30K
 
-```bash
-hdfs dfs -ls wasbs:///livetest/
-# Should show: dsdgen, tpcds.idx, tpcds_venv.tar.gz
-```
+We haven't measured SF≥50K. Linear extrapolation suggests:
+
+| SF | est. wall (5× E32ads_v5, ABFS) | est. output | est. cost |
+|---:|---:|---:|---:|
+| 50,000 | ~5 h | 20 TB | ~$50 |
+| 100,000 | ~10 h | 40 TB | ~$100 |
+
+For SF ≥ 50K, consider:
+- Adding workers (8 or 10× E32ads_v5) to keep wall time under a coffee break
+- Sharding the output across multiple ABFS accounts to dodge the 60 Gbps cap
+- `spark.hadoop.dfs.replication=1` if you used HDFS (you didn't, see §3)
 
 ---
 
-## 6. Run
+## 7. Failure modes and recovery
 
-### 6.1 Submit command (HDFS output)
-
-From the HDI headnode:
-
-```bash
-ARCH=wasbs:///livetest/tpcds_venv.tar.gz
-DSDGEN=wasbs:///livetest/dsdgen
-IDX=wasbs:///livetest/tpcds.idx
-
-spark-submit \
-  --master yarn --deploy-mode client \
-  --num-executors 5 \
-  --executor-cores 32 \
-  --executor-memory 192g \
-  --conf spark.network.timeout=1800s \
-  --conf spark.task.maxFailures=8 \
-  --conf spark.dynamicAllocation.enabled=false \
-  --conf spark.speculation=true \
-  --conf spark.speculation.quantile=0.85 \
-  --conf spark.speculation.multiplier=1.4 \
-  --conf spark.hadoop.dfs.replication=2 \
-  --conf spark.executorEnv.PYTHONPATH=./venv \
-  --conf spark.yarn.appMasterEnv.PYTHONPATH=./venv \
-  --archives "$ARCH#venv" \
-  --files dsdgen,tpcds.idx \
-  hdi_livy_v2.py \
-  30000 \
-  hdfs:///tpcds/sf30000 \
-  sf30k-prod \
-  $DSDGEN $IDX \
-  wasbs:///livetest/sf30k-run.log
-```
-
-### 6.2 Why each flag matters
-
-| flag | reason |
-|---|---|
-| `--num-executors 5` | one executor per worker node — max per-task NVMe + memory bandwidth |
-| `--executor-cores 32` | fully use each worker; 5 × 32 = 160 task slots |
-| `--executor-memory 192g` | leaves ~64 GB for OS / YARN overhead per node |
-| `spark.network.timeout=1800s` | absorbs ABFS auth refreshes and heartbeat blips on 6 h+ runs |
-| `spark.task.maxFailures=8` | retry tail-task hiccups instead of failing the stage |
-| `spark.dynamicAllocation.enabled=false` | want fixed 5-executor fleet from t=0; no ramp-up cost |
-| `spark.speculation=true` (+85%/1.4×) | re-launches stuck tail tasks; recovers ~15–30 min of tail |
-| `spark.hadoop.dfs.replication=2` | survives one node loss; saves 33% disk vs default rep=3 |
-| `--archives venv.tar.gz#venv` + `PYTHONPATH=./venv` | ships pyarrow 10.0.1 + wheel to executors before any Python worker spawns (bypasses `addPyFile` race) |
-| `--files dsdgen,tpcds.idx` | distributes the binary + index to every executor's `SparkFiles` dir |
-
-### 6.3 Generator parameters
-
-| arg | value | reason |
+| symptom | likely cause | fix |
 |---|---|---|
-| scale | **30,000** | target SF |
-| output | `hdfs:///tpcds/sf30000` | writes to attached-disk HDFS, not ABFS |
-| `--chunks` (in script) | **2,400** | chunks/slots = 15× (above tail-drag); rows/chunk ≈ 23.8M ≈ 5.2 GB .dat — fits NVMe scratch easily; under SF=30K inventory floor (~2,610) |
+| `ImportError: GLIBCXX_3.4.26 not found` | env tarball not unpacked, or wrong pyarrow version | confirm `--archives env#env` and `spark.executorEnv.PYSPARK_PYTHON=./env/bin/python`; rebuild tarball with `tpcds-gen package-env` (which pins pyarrow=14) |
+| `dsdgen: GLIBC_2.34 not found` | uploaded a modern dsdgen | rebuild on the headnode: `tpcds-gen install-dsdgen --target hdi-glibc-2.27` (auto-falls-through to `--from-source`) |
+| `Futures timed out after [100000 milliseconds]` | YARN AM 100 s timeout | not your bug — the 0.4.0 bootstrap initializes SparkSession first |
+| `400 Bad Request` from Livy | missing `X-Requested-By` header | always go through `tpcds-gen-spark-submit --via-livy`; never hand-craft the POST |
+| `dsdgen_path` ignored on cluster | (0.3.x footgun) | upgrade to ≥0.4.0; explicit path is now belt-and-suspenders, SparkFiles wins |
+| Tasks stuck >30 min on one node | slow HDD or noisy neighbor | speculation kicks in at 85% completion; otherwise restart that executor |
+| HDFS DataNode disk full | one disk filled before HDFS rebalanced | shouldn't happen with ABFS (§3); if HDFS, manually rebalance |
+| Tasks fill `/tmp` on OS disk | `tmp_root` not set; `/tmp` is the 124 GB OS disk | pass `tmp_root="/mnt/tmp"` to `generate()`; first `chmod 1777 /mnt/tmp` on every worker |
+| `ss_ticket_number` int32 overflow | pre-0.3.1 schema | upgrade — fixed by widening order/ticket cols to int64 |
+| ABFS auth token expired mid-run | service principal token TTL < run wall-clock | use long-lived MSI on the cluster |
 
-The script's auto-chunks formula is conservative for big SFs; pass
-explicitly.
+### 7.1 HDFS-specific gotcha: disk attachment
 
----
-
-## 7. Monitoring
-
-In one terminal, watch the Spark UI:
-
-```bash
-# Tunnel the Spark UI to your laptop:
-ssh -L 8088:headnodehost:8088 sshuser@$NAME-ssh.azurehdinsight.net
-# then open http://localhost:8088
-```
-
-Key things to watch:
-- **Stages tab:** the `mapPartitions(run_dsdgen_task)` stage should show 2,400 tasks; aim for ≥ 80% running concurrently
-- **Executors tab:** all 5 executors active; per-executor task time should be uniform (variance > 2× = stragglers, speculation kicks in)
-- **Storage tab:** no large RDD caching — this job is purely streaming
-- **Environment tab:** confirm `spark.executorEnv.PYTHONPATH=./venv` is set
-
-In another terminal, watch HDFS fill up:
-
-```bash
-ssh sshuser@$NAME-ssh.azurehdinsight.net \
-  'while true; do
-    sudo -u hdfs hdfs dfs -du -s -h /tpcds/sf30000 2>/dev/null
-    sudo -u hdfs hdfs dfsadmin -report | grep -E "DFS Used|Remaining" | head -2
-    sleep 300
-   done'
-```
-
-Expected fill rate: ~30 GB/min on average across the cluster (10.8 TB
-output × rep=2 / 360 min ≈ 60 GB/min HDFS-side; per-node ~12 GB/min).
-
-If fill rate stalls > 10 min, check the Spark UI for stragglers.
+If you provisioned with `--workernode-data-disks-per-node 16`, those 16
+disks land on the workers but **HDFS won't see them until you reconfigure
+`dfs.datanode.data.dir`** in Ambari. The Ambari REST API is finicky here;
+use the Python `configs.py` helper (Python 2 only — `/usr/bin/python`),
+then restart HDFS from the Ambari Web UI.
 
 ---
 
-## 8. Verification
+## 8. Cost (actual, 2026-04-19/20)
 
-After the job completes, validate row counts before tearing down:
+5 × E32ads_v5 + 2 × E8ads_v5 head ≈ **$9.84/h** at list price (East US 2):
 
-```bash
-spark-submit \
-  --master yarn --deploy-mode client \
-  --num-executors 5 --executor-cores 32 --executor-memory 192g \
-  --conf spark.executorEnv.PYTHONPATH=./venv \
-  --archives "$ARCH#venv" \
-  count_tpcds.py hdfs:///tpcds/sf30000
-```
+| Run | Wall | Compute |
+|---|---|---|
+| v1 attempt (killed on int32 bug) | 5 h | $49 |
+| SF=10K validation | 1.7 h | $17 |
+| SF=30K v2 | 3.2 h | $31 |
+| Provisioning + post-run idle (scaler bug, see §8.1) | 6 h | ~$60 |
+| **Total cluster compute** | | **~$160** |
 
-Expected total rows for SF=30,000:
+Storage (held 11.85 TB on ABFS Hot, 1 month): ~$245 if held; **~$0 if
+deleted same day.** This is why ABFS-as-output is so much cheaper than
+HDFS-then-distcp at this scale.
 
-| table | rows |
-|---|---:|
-| store_sales | ~86.4 B |
-| catalog_sales | ~43.2 B |
-| web_sales | ~21.6 B |
-| inventory | ~3.94 B |
-| (others) | summing to ~190 B grand total |
+### 8.1 Operational gotcha worth its own line
 
-The script reports per-table row counts in its final log line:
-
-```
-=== HDI-LIVY-V2 sf30k-prod RESULT ===
-label=sf30k-prod scale=30000 output=hdfs:///tpcds/sf30000
-elapsed_s=23847.3
-num_tasks=2403 num_chunks=2400
-total_rows=190123456789 succeeded=True
-```
-
-(Exact total depends on TPC-DS spec version; check `docs/architecture.md`
-schema definitions.)
+Our auto-scale-down script's `awk` parse left trailing whitespace in the
+state string, so `[[ "$STATE" == "SUCCEEDED" ]]` never matched and the
+cluster sat idle at 5-worker size for ~5 h after job completion. **About
+$40 wasted.** Use `tr -d ' \r\t'` on parsed values or have the script
+just call `az hdinsight resize --workernode-count 1` unconditionally on
+exit.
 
 ---
 
-## 9. Copy off-cluster (optional)
-
-If you want to retain the 10.8 TB output past cluster lifetime, distcp
-to ABFS before deleting:
-
-```bash
-hadoop distcp -m 80 \
-  -strategy dynamic \
-  hdfs:///tpcds/sf30000 \
-  abfs://<container>@<account>.dfs.core.windows.net/tpcds/sf30000
-```
-
-Budget: **~1.5–2 h** at this size, ~$25–50 in Storage egress depending
-on tier. The cluster compute keeps ticking during distcp, so factor
-that in if you're paying by the hour.
-
-Skip distcp and use `--output abfs:///...` from the start if you don't
-need the HDFS-resident copy. Adds ~10–15% to wall-clock vs HDFS but
-removes the copy step entirely.
-
----
-
-## 10. Tear-down
+## 9. Tear-down
 
 ```bash
 az hdinsight delete -n $NAME -g $RG --yes
 ```
 
-The storage account (containing your `dsdgen`, `venv`, logs, optional
-distcp output) is preserved by default — HDI only detaches it.
+The storage account (containing your env tarball, dsdgen binary, output
+parquet) is preserved by default — HDI only detaches it.
 
-If you copied output to ABFS in §9, you can delete the cluster
-immediately. If you didn't, **the HDFS data dies with the cluster**.
-
----
-
-## 11. Cost breakdown (list price, East US 2)
-
-| component | unit rate | quantity | duration | cost |
-|---|---:|---:|---:|---:|
-| E32ads_v5 worker | $1.92/h | 5 | 7 h | $67 |
-| E8ads_v5 head | $0.48/h | 2 | 7 h | $7 |
-| S30 Standard HDD | $40/disk-month | 80 (16×5) | 7 h | $30 |
-| Storage account (existing, ABFS) | included | — | — | ~$0 marginal |
-| **Cluster total** | | | | **~$104** |
-
-Optional add-ons:
-- Distcp HDFS → ABFS: 5×$1.92 × 1.5 h ≈ $15 compute + ~$30 ABFS ingress = ~$45
-- Holding 10.8 TB Parquet on ABFS Hot for 1 month: ~$220
-- Holding it on ABFS Cool: ~$110
-
-**Pre-distcp run cost: ~$104.** Add ~$45 if you copy off-cluster.
+If your output is on HDFS (§3) and you didn't distcp to ABFS first, **the
+data dies with the cluster.** This is the single biggest argument for
+using ABFS output from the start.
 
 ---
 
-## 12. Failure modes and recovery
+## 10. Cross-references
 
-| symptom | likely cause | fix |
-|---|---|---|
-| `ModuleNotFoundError: tpcds_fast_datagen` on executors | venv archive not unpacked, or `PYTHONPATH=./venv` not set | verify both `--archives` and `spark.executorEnv.PYTHONPATH` are present |
-| `ImportError: ... GLIBCXX_3.4.26 not found` | wrong pyarrow version in venv | rebuild venv with `pyarrow==10.0.1` |
-| `dsdgen: GLIBC_2.34 not found` | pre-built dsdgen used newer glibc than HDI image | build dsdgen on the cluster (see live-test-status.md) |
-| Tasks stuck > 30 min on one node | slow HDD or noisy neighbor | speculation should kick in at 85% completion; otherwise restart that executor |
-| HDFS `DataNode disk full` | one disk filled before HDFS rebalanced | shouldn't happen with 270% headroom; if it does, manually rebalance or restart datanode |
-| ABFS auth token expired mid-run | service principal token TTL < run wall-clock | use long-lived MSI on the cluster, or pre-refresh before submit |
-| Job hung at "Generating xxx" with no progress | dsdgen child crashed silently | check executor logs for that task; usually a stale `tpcds.idx` mismatch |
-
----
-
-## 13. Actual results (2026-04-19/20 run)
-
-### 13.1 Timing summary
-
-| Run | Output | Wall-clock | TOT written | Throughput | Outcome |
-|---|---|---|---|---|---|
-| **SF=30K v1** (HDFS, chunks=2400, replication=2 attempted) | `hdfs:///tpcds/sf30000` | ~5 h before kill | 1.5 TB | ~0.3 TB/h | ❌ killed — int32 overflow on `ss_ticket_number` (`2307000001 > 2^31`) |
-| **SF=10K validation** (ABFS, chunks=4800, schema fix v0.3.1) | `wasbs://.../tpcds/sf10000` | **~1 h 41 min** | 3.95 TB | ~2.4 TB/h | ✅ SUCCEEDED |
-| **SF=30K v2** (ABFS, chunks=4800, schema fix v0.3.1) | `wasbs://.../tpcds/sf30000` | **~3 h 10 min** | 11.847 TB | ~3.7 TB/h | ✅ SUCCEEDED |
-
-### 13.2 Per-table breakdown (SF=30K v2)
-
-| Table | Chunks | Size | Stage 3 task pace |
-|---|---|---|---|
-| store_sales | 4800 | 4.853 TB | ~125 sec/task |
-| catalog_sales | 4800 | 3.910 TB | ~127 sec/task |
-| web_sales | 4800 | 1.878 TB | ~73 sec/task |
-| dimensions + small fact tables | ~213 | < 50 GB total | ~12 sec/task each |
-| **Total** | 24,613 | **11.847 TB** | — |
-
-### 13.3 Bugs caught and fixed
-
-1. **`ss_ticket_number` / `*_order_number` int32 overflow** at SF ≥ ~10K. Ticket and order numbers monotonically increase across chunks and exceed `2^31 = 2,147,483,648` mid-run. Fixed in `tpcds_fast_datagen.schema` v0.3.1 by changing the following columns from `_int` (int32) to `_bigint` (int64):
-   - `ss_ticket_number`, `sr_ticket_number`
-   - `cs_order_number`, `cr_order_number`
-   - `ws_order_number`, `wr_order_number`
-
-2. **HDFS scratch fills `/tmp` on the OS disk** (124 GB) when `tmp_root` is unset. Workers' `/dev/sda1` filled with `/tmp/tpcds_*` chunks, NodeManagers crashed. Fixed by passing `tmp_root="/mnt/tmp"` to `generate()` (1.2 TB NVMe per worker, must be `chmod 1777`-prepped first).
-
-3. **HDFS only saw `/mnt/resource` after provision** — needed Ambari reconfig of `dfs.datanode.data.dir` to add 16 × `/data_disk_*`. Ambari REST kept returning empty 500s; `configs.py` (Python 2 only — use `/usr/bin/python`) worked. HDFS service restart from Ambari Web UI was required to pick up the new dirs.
-
-### 13.4 Knobs that mattered
-
-Going from the v1 config (HDFS, chunks=2400, replication=2) to v2 (ABFS, chunks=4800, replication=1) gave a **~12× throughput improvement**:
-
-- **HDFS → ABFS:** removed datanode write-amp + sync overhead. ABFS scales to ~60 Gbps egress on a standard storage account; we saw zero `ServerBusy` / `EgressIsOverAccountLimit` / `503` events at peak ~3 TB/h.
-- **chunks=2400 → 4800:** halved per-task runtime (18 min → 60–125 sec depending on table), dramatically improved load balancing and shortened the failure-recovery tail.
-- **`spark.task.maxFailures=8 → 4`:** surfaced the int32 bug in attempt 4 instead of attempt 8. Worth ~1 h of wasted compute on a deterministic-failure run.
-
-### 13.5 Cost (actual)
-
-5 × E32ads_v5 + 2 × E8ads_v5 head ≈ $9.84/h.
-- v1 attempt: ~5 h × $9.84 = **$49** (wasted, killed on int32 bug)
-- SF=10K validation: 1.7 h × $9.84 = **$17**
-- SF=30K v2: 3.2 h × $9.84 = **$31**
-- Plus ~1 h provisioning + ~5 h post-completion idle (scaler bug, see §13.6) = ~$60
-- HDD costs (16×5 = 80 × S30): negligible at hourly proration
-- ABFS storage (11.85 TB Hot, 1 month): ~$245 if held; ~$0 if used and deleted same day
-- **Total cluster compute: ~$160** (would have been ~$100 without the scaler bug + v1 wasted run)
-
-### 13.6 Operational gotcha: auto-scaler bug
-
-The post-run scale-down script (`scale_down_when_done.sh`) polled `yarn application -status` every 2 min and was supposed to break on `Final-State=SUCCEEDED`, then issue `az hdinsight resize --workernode-count 1`. It correctly detected SUCCEEDED but its string comparison failed (awk `-F:` left trailing whitespace in `$STATE`, so `[[ "$STATE" == "SUCCEEDED" ]]` never matched). The cluster sat idle at 5-worker size for ~5 h after job completion before manual intervention — about **$40 wasted**. For next run: use `tr -d ' \r\t'` on the parsed value, or parse via `yarn application -status | awk -F: '/Final-State/ {gsub(/ /,"",$2); print $2}'`.
-
----
-
-## 14. What to record after the run
-
-For the project's `docs/live-test-status.md` and CHANGELOG:
-
-- [ ] Actual wall-clock (vs ~7 h estimate)
-- [ ] Total rows (must match expected)
-- [ ] Per-table generation times (from script logs)
-- [ ] Peak HDFS used (`hdfs dfsadmin -report`)
-- [ ] Speculation re-launches count (Spark UI)
-- [ ] Any failed tasks and their errors
-- [ ] Total cost (Azure cost-management export, prorated)
-
----
-
-## 15. References
-
-- [`docs/spark-sizing-best-practices.md`](spark-sizing-best-practices.md) — calibrated wall-clock model
-- [`docs/live-test-status.md`](live-test-status.md) — HDI Livy / Fabric SJD workarounds, dsdgen + venv bootstrap
-- [`docs/notebooks-and-livy.md`](notebooks-and-livy.md) — Spark API usage
-- `hdi_build_venv.py` / `hdi_build_dsdgen.py` — developer-side helpers that live
-  outside the repo (in `/tmp/tpcds-live-tests/` on the author's box) used to
-  build the portable venv tarball and an on-cluster `dsdgen` for HDI. Not
-  required to use this package — `tpcds-gen install-dsdgen` now covers the
-  common case; see [`docs/live-test-status.md`](live-test-status.md) for the
-  exact steps they implement.
+- [`docs/hdinsight-quickstart.md`](hdinsight-quickstart.md) — the
+  5-command flow that supersedes the manual recipe sections that used to
+  live here.
+- [`docs/spark-sizing-best-practices.md`](spark-sizing-best-practices.md)
+  — calibrated wall-clock model for arbitrary SF.
+- [`docs/notebooks-and-livy.md`](notebooks-and-livy.md) — Spark API
+  usage from notebooks (Fabric, Databricks, Livy sessions).
+- [`docs/live-test-status.md`](live-test-status.md) — current pass/fail
+  matrix across submission paths.

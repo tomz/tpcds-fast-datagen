@@ -66,31 +66,51 @@ def plan_tasks(scale_factor: int, num_chunks: int) -> list[dict]:
 def _resolve_dsdgen_on_executor(explicit: str | None = None) -> str:
     """Find the dsdgen binary on an executor.
 
-    Resolution order:
-        1. Explicit path argument (highest priority).
-        2. SparkFiles.get("dsdgen") — set by ``spark-submit --files dsdgen``
-           or ``spark.sparkContext.addFile(...)`` in a notebook.
+    Resolution order (revised in 0.4.0 to fix the heterogeneous-cluster
+    footgun): SparkFiles **wins** when both an explicit driver path and a
+    SparkFiles-shipped binary are present, because the driver-side path is
+    by definition not guaranteed to exist on executors. SparkFiles is.
+
+        1. SparkFiles.get("dsdgen") if it exists on this executor.
+        2. ``explicit`` argument (driver-supplied path) if it exists here.
         3. ``DSDGEN_PATH`` env var.
         4. The single-node ``binary._SEARCH_PATHS`` list.
+
+    A warning is logged if both (1) and (2) resolve to different files —
+    SparkFiles still wins.
     """
-    if explicit and os.path.exists(explicit):
-        return explicit
+    sparkfiles_path: str | None = None
     try:
         from pyspark import SparkFiles  # type: ignore
-        path = SparkFiles.get("dsdgen")
-        if os.path.exists(path):
-            os.chmod(path, 0o755)
-            # Make sure tpcds.idx is alongside (dsdgen reads it from cwd).
+        candidate = SparkFiles.get("dsdgen")
+        if os.path.exists(candidate):
+            os.chmod(candidate, 0o755)
+            # If tpcds.idx was shipped via --files, copy it next to dsdgen so
+            # the binary can find its index table.
             try:
                 idx_src = SparkFiles.get("tpcds.idx")
-                idx_dst = os.path.join(os.path.dirname(path), "tpcds.idx")
+                idx_dst = os.path.join(os.path.dirname(candidate), "tpcds.idx")
                 if not os.path.exists(idx_dst) and os.path.exists(idx_src):
                     shutil.copy2(idx_src, idx_dst)
             except Exception:
                 pass
-            return path
+            sparkfiles_path = candidate
     except (ImportError, Exception):
         pass
+
+    if sparkfiles_path is not None:
+        if explicit and os.path.exists(explicit) and os.path.realpath(explicit) != os.path.realpath(sparkfiles_path):
+            import logging
+            logging.getLogger(__name__).warning(
+                "dsdgen: SparkFiles-shipped binary at %s overrides explicit "
+                "dsdgen_path=%s. Pass dsdgen via --files (or sc.addFile) instead "
+                "of dsdgen_path= for cluster-correct behavior.",
+                sparkfiles_path, explicit,
+            )
+        return sparkfiles_path
+
+    if explicit and os.path.exists(explicit):
+        return explicit
 
     env_path = os.environ.get("DSDGEN_PATH")
     if env_path and os.path.exists(env_path):
